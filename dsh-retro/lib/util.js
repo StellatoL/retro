@@ -64,6 +64,26 @@ export function nowStamp() {
   return `${todayStamp()} ${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 
+/** File-name-safe stamp: YYYY-MM-DD-HHmm (no colons — Windows-safe). */
+export function stampNow() {
+  const d = new Date();
+  const p = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}`;
+}
+
+/**
+ * Pick a unique `<base>.md` file name inside `dir`: appends `-2`, `-3`, …
+ * when the name is taken (never overwrites).
+ */
+export function uniqueFileName(dir, base) {
+  let name = base;
+  let n = 2;
+  while (existsSync(path.join(dir, `${name}.md`))) {
+    name = `${base}-${n++}`;
+  }
+  return `${name}.md`;
+}
+
 /** ISO date (date only) for blog frontmatter. */
 export function isoDate(date = new Date()) {
   return date.toISOString().slice(0, 10);

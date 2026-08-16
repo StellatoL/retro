@@ -4,8 +4,8 @@ import path from "node:path";
 import os from "node:os";
 import { fileURLToPath } from "node:url";
 import { mkdirSync, readdirSync } from "node:fs";
-import { atomicWrite, nowStamp, parseFrontmatter, readOptional, safeJoin } from "./util.js";
-import { experienceRoot, readStaging, writeStaging } from "./settler.js";
+import { atomicWrite, nowStamp, stampNow, uniqueFileName, slugify, cleanTitle, parseFrontmatter, readOptional, safeJoin } from "./util.js";
+import { experienceRoot, proposalsRoot, readStaging, writeStaging } from "./settler.js";
 import { listBlogPosts } from "./publisher.js";
 
 /** Index file name inside the experience root. */
@@ -52,7 +52,8 @@ export function ensureSkillFiles() {
  */
 export function proposeUpdate(cfg, store, { kind, title, content, reason, actor = "command" }) {
   const id = `prop-${Date.now().toString(36)}-${Math.floor(Math.random() * 1e6).toString(36)}`;
-  const relPath = `_proposals/${id}.md`;
+  const fileName = uniqueFileName(proposalsRoot(cfg), `${stampNow()}-${slugify(cleanTitle(title) || "提案")}`);
+  const relPath = `_proposals/${fileName}`;
   const text = [
     "---",
     `Type: dsh_retro_proposal`,

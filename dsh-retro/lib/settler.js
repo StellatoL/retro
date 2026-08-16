@@ -2,7 +2,7 @@
 // and the human-confirmed settle/discard flow. Host-side node:fs only.
 import path from "node:path";
 import { mkdirSync, existsSync, readFileSync, writeFileSync } from "node:fs";
-import { atomicWrite, loadTemplate, renderTemplater, safeJoin, fallbackTemplate, nowStamp, shortId, readOptional, cleanTitle } from "./util.js";
+import { atomicWrite, loadTemplate, renderTemplater, safeJoin, fallbackTemplate, nowStamp, stampNow, uniqueFileName, slugify, readOptional, cleanTitle } from "./util.js";
 
 /** Absolute staging dir (vault/stagingDir). */
 export function stagingRoot(cfg) {
@@ -123,7 +123,9 @@ export function draftCardFiles(cfg, store, card, { markdown, questions = [], tem
   ].join("\n");
 
   const content = `${frontmatter}${body}`;
-  const relPath = `${card.id}.md`;
+  // 统一命名：日期-时间-简要主题（可读、可排序、不依赖内部 id）
+  const base = `${stampNow()}-${slugify(cleanTitle(card.title))}`;
+  const relPath = uniqueFileName(stagingRoot(cfg), base);
   const target = writeStaging(cfg, relPath, content, { store, actor });
   store.updateCard(card.id, { stagingPath: relPath, status: "drafted" });
   return { relPath, target, warnings };
@@ -179,9 +181,10 @@ export function settleCard(cfg, store, card, { action, dir, note = null, actor =
   const finalText = mergeIntoTemplate(template, vars.title, userBody);
 
   const settleDir = resolveSettleDir(cfg, dir);
-  const fileName = `${sanitizeFileName(vars.title)}.md`;
+  const settleAbs = safeJoin(cfg.vaultPath, settleDir);
+  const fileName = uniqueFileName(settleAbs, `${stampNow()}-${slugify(cleanTitle(vars.title))}`);
   const finalRel = `${settleDir}/${fileName}`;
-  const finalTarget = safeJoin(cfg.vaultPath, finalRel);
+  const finalTarget = path.join(settleAbs, fileName);
   mkdirSync(path.dirname(finalTarget), { recursive: true });
   atomicWrite(finalTarget, finalText);
   store.updateCard(card.id, { status: "approved", vaultNote: finalRel, updatedAt: new Date().toISOString() });
@@ -293,10 +296,6 @@ export function splitCardFile(text) {
   return { title, body: m[2].trim() };
 }
 
-function sanitizeFileName(name) {
-  return String(name).replace(/[\\/:*?"<>|#\[\]]/g, "-").replace(/\s+/g, " ").trim().slice(0, 80) || "未命名";
-}
-
 /** Create the experience-entry draft (permanent-note style) in staging/_entries. */
 export function draftEntryFile(cfg, store, entry, { actor = "command" } = {}) {
   const warnings = [];
@@ -326,7 +325,8 @@ export function draftEntryFile(cfg, store, entry, { actor = "command" } = {}) {
   // Drop the template's own H1 heading (e.g. "结论一句话") so only the entry title remains.
   const templateWithoutHeading = template.replace(/^#\s+.+$/m, "").trimEnd();
   const content = `${templateWithoutHeading}\n\n${body}`;
-  const relPath = `_entries/${entry.id}.md`;
+  const fileName = uniqueFileName(entriesRoot(cfg), `${stampNow()}-${slugify(safeTitle)}`);
+  const relPath = `_entries/${fileName}`;
   const target = writeStaging(cfg, relPath, content, { store, actor });
   store.updateEntry(entry.id, { draftPath: relPath, status: "drafted" });
   return { relPath, target, warnings };
@@ -336,9 +336,10 @@ export function draftEntryFile(cfg, store, entry, { actor = "command" } = {}) {
 export function settleEntry(cfg, store, entry, { actor = "command" } = {}) {
   const safeTitle = cleanTitle(entry.title || "未命名经验");
   const text = entry.draftPath ? readStaging(cfg, entry.draftPath) : `# ${safeTitle}\n\n${entry.model ?? ""}`;
-  const fileName = `${sanitizeFileName(safeTitle)}.md`;
-  const finalRel = `${path.relative(cfg.vaultPath, experienceRoot(cfg)).split(path.sep).join("/")}/${fileName}`;
-  const finalTarget = safeJoin(cfg.vaultPath, finalRel);
+  const root = experienceRoot(cfg);
+  const fileName = uniqueFileName(root, `${stampNow()}-${slugify(safeTitle)}`);
+  const finalRel = `${path.relative(cfg.vaultPath, root).split(path.sep).join("/")}/${fileName}`;
+  const finalTarget = path.join(root, fileName);
   mkdirSync(path.dirname(finalTarget), { recursive: true });
   atomicWrite(finalTarget, text);
   store.updateEntry(entry.id, { status: "approved", notePath: finalRel, updatedAt: new Date().toISOString() });
@@ -358,5 +359,3 @@ export function readVaultNote(cfg, relPath) {
   if (text === undefined) throw new Error(`笔记不存在：${relPath}`);
   return text;
 }
-
-export { existsSync, readFileSync, writeFileSync, shortId };

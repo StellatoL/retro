@@ -173,7 +173,8 @@ test("proposeUpdate writes proposal file; adoptProposal applies with .bak", () =
   const prop = proposeUpdate(cfg, store, { kind: "skill", title: "补一条规则", content: "## 新规则\n- 具体", reason: "反复出现", actor: "test" });
   assert.equal(prop.ok, true);
   assert.ok(prop.relPath.startsWith("_proposals/"));
-  assert.ok(existsSync(path.join(vault, "Index", "06_Retro", "_proposals", `${prop.id}.md`)));
+  // 文件名遵循 日期-时间-主题 命名（不再是内部 id）
+  assert.ok(existsSync(path.join(vault, "Index", "06_Retro", prop.relPath)));
 
   const proposal = store.getProposal(prop.id);
   const adopted = adoptProposal(cfg, store, proposal);
@@ -198,7 +199,7 @@ test("updateMoc builds and refreshes the experience index", () => {
   const moc = updateMoc(cfg, store, { actor: "test" });
   assert.equal(moc.count, 1);
   const text = readFileSync(path.join(vault, "Index", "06_Retro", "经验库", MOC_FILENAME), "utf8");
-  assert.ok(text.includes("[[第一条经验]]"));
+  assert.ok(text.includes("第一条经验")); // 链接基于 日期-时间-主题 文件名
   assert.ok(text.includes("entryCount: 1"));
 
   // second settle → index updates to 2
@@ -207,7 +208,7 @@ test("updateMoc builds and refreshes the experience index", () => {
   settleEntry(cfg, store, entry2);
   updateMoc(cfg, store, { actor: "test" });
   const text2 = readFileSync(path.join(vault, "Index", "06_Retro", "经验库", MOC_FILENAME), "utf8");
-  assert.ok(text2.includes("[[第二条经验]]"));
+  assert.ok(text2.includes("第二条经验"));
   assert.ok(text2.includes("entryCount: 2"));
   rmSync(dir, { recursive: true, force: true });
 });

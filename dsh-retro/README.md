@@ -44,6 +44,8 @@ New-Item -ItemType Junction -Path "$env:USERPROFILE\.dsh\profiles\web\node_modul
 
 ## 命令
 
+> **命名约定**：所有生成的草稿/落库/条目/提案文件统一命名为 `日期-时间-简要主题.md`（如 `2026-08-16-2215-dsh-插件复盘.md`），同名冲突自动追加 `-2`、`-3`。
+
 | 命令 | 作用 |
 |---|---|
 | `/retro queue` | 队列总览（待复盘/草稿/条目/提案/发布） |
