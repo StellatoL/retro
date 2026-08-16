@@ -1,11 +1,12 @@
 {
   "name": "dsh-retro",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "DSH 经验复盘管线：采集→提炼→沉淀→进化→发布。对话/工程结束后自动沉淀经验，用户在 Obsidian 中审阅进化，双向联动 Astro Blog。",
   "type": "module",
   "main": "lib/index.js",
   "exports": {
     ".": "./lib/index.js",
+    "./client": "./lib/client.js",
     "./package.json": "./package.json"
   },
   "files": [
@@ -17,6 +18,12 @@
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-runtime"
+      ]
     }
   },
   "peerDependencies": {
@@ -36,6 +43,7 @@
     "retro",
     "obsidian",
     "knowledge",
-    "blog"
+    "blog",
+    "web"
   ]
 }

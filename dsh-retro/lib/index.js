@@ -9,6 +9,7 @@ import { registerCommands } from "./commands.js";
 import { registerTools } from "./tools.js";
 import { ensureDirs } from "./settler.js";
 import { ensureSkillFiles } from "./evolvor.js";
+import { registerPanelApi } from "./api.js";
 
 const name = "retro";
 const inject = ["commands", "llm", "sessionQuery", "tools"];
@@ -37,6 +38,13 @@ function apply(ctx, config) {
     // Human-facing commands + model-facing tools.
     registerCommands(ctx, store, cfg);
     registerTools(ctx, store, cfg);
+
+    // Web panel API (GET /retro/api) — optional webServer service.
+    try {
+      registerPanelApi(ctx, store);
+    } catch (error) {
+      ctx.logger?.warn?.(`[retro] 面板 API 注册失败：${String(error?.message ?? error)}`);
+    }
 
     // Boot-time weekly check (T4): log a reminder; /retro queue surfaces it.
     const meta = store.getMeta();

@@ -76,6 +76,15 @@ New-Item -ItemType Junction -Path "$env:USERPROFILE\.dsh\profiles\web\node_modul
 2. `/retro queue` 可见待采纳提案；`/retro adopt <id>` 确认后写入 `~/.dsh/skills/retro-writing/SKILL.md` 或 `~/.dsh/AGENTS.md`（原文件自动备份 `.bak`）——下次对话模型即遵循新规则；
 3. 经验条目沉淀（`/retro entry keep`）后自动刷新经验库 MOC 索引（`Index/06_Retro/经验库/00_索引.md`）。
 
+## Web 复盘面板（M6）
+
+原生客户端插件（`dsh.client` 声明 + 运行时 bundle，**前端零重建**）：
+
+- 浏览器刷新 DSH Web 页面后，右下角出现 **「复盘」浮动按钮**；
+- 打开面板显示：总览统计（卡片/条目/提案/发布/素材/周报）、待审队列（草稿卡片/条目/提案）、最近审计；
+- 数据来自宿主 `GET /retro/api`（同源实时快照，只读；交互确认仍走 `/retro review` 等命令）；
+- 机制：`dsh-client-modules` 扫描包声明 → `GET /plugins/dsh-retro/client.js` 运行时 serve bundle → shell `__ModuleLoader__` 执行（详见 `docs/M6-web-panel.md`）。
+
 ## 数据与安全
 
 - 状态与审计：`~/.dsh/retro/store.json`（所有写入留痕）
