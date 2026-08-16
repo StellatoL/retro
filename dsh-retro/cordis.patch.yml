@@ -1,0 +1,13 @@
+# dsh-retro bundle patch: inserts the retro plugin row(s) into the profile.
+#
+# The bundle patch layer is applied by the profile compositor when this package
+# is listed in `dsh.profile.bundles`. Rows can be overridden by the user's own
+# profile `cordis.patch.yml` (last write wins per row id).
+#
+# Runtime-adjustable settings (vaultPath, blogPath, stagingDir, ...) live in
+# code defaults + `~/.dsh/retro/config.json` (see `/retro config`); keep this
+# row config minimal.
+- insert:
+    - id: retro
+      name: dsh-retro
+      config: {}

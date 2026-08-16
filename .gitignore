@@ -1,0 +1,23 @@
+# dependencies
+node_modules/
+
+# logs & diagnostics
+*.log
+apply-error.log
+
+# credentials / secrets (belt and braces — never commit these)
+.env
+.env.*
+*.credentials.yaml
+.credentials.yaml
+*.pem
+*.key
+
+# dsh runtime state
+.dsh/
+sessions/
+storages/
+
+# OS noise
+.DS_Store
+Thumbs.db
