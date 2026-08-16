@@ -193,6 +193,27 @@ test("template fallback renders without Templater leftovers", () => {
   rmSync(dir, { recursive: true, force: true });
 });
 
+test("mergeIntoTemplate sanitizes a corrupted title (## leak)", () => {
+  const template = [
+    "---",
+    "Type: project_experience",
+    "---",
+    "",
+    "# {{title}}",
+    "",
+    "## 项目目标",
+    ""
+  ].join("\n");
+  const merged = mergeIntoTemplate(template, "## 项目目标（一句话）", "## 项目目标\n实现 X");
+  // The H1 must be clean (no "##" inside it), and the section heading intact.
+  const h1 = /^# (.+)$/m.exec(merged)[1];
+  assert.ok(!h1.includes("##"));
+  assert.equal(h1, "项目目标（一句话）");
+  assert.ok(merged.includes("## 项目目标"));
+  assert.ok(merged.includes("实现 X"));
+  assert.ok(!merged.includes("# ##"));
+});
+
 test("stripQuestionsSection removes review footer", () => {
   const body = "## 关键经验\n- a\n\n---\n\n## 待确认问题\n1. 是否保留？";
   assert.ok(!stripQuestionsSection(body).includes("待确认问题"));

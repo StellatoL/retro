@@ -2,7 +2,7 @@
 // and the human-confirmed settle/discard flow. Host-side node:fs only.
 import path from "node:path";
 import { mkdirSync, existsSync, readFileSync, writeFileSync } from "node:fs";
-import { atomicWrite, loadTemplate, renderTemplater, safeJoin, fallbackTemplate, nowStamp, shortId, readOptional } from "./util.js";
+import { atomicWrite, loadTemplate, renderTemplater, safeJoin, fallbackTemplate, nowStamp, shortId, readOptional, cleanTitle } from "./util.js";
 
 /** Absolute staging dir (vault/stagingDir). */
 export function stagingRoot(cfg) {
@@ -169,7 +169,7 @@ export function settleCard(cfg, store, card, { action, dir, note = null, actor =
   const userBody = stripQuestionsSection(parsed.body);
 
   const vars = {
-    title: parsed.title || card.title || "未命名复盘",
+    title: cleanTitle(parsed.title || card.title || "未命名复盘"),
     createDate: card.createdAt.slice(0, 16).replace("T", " "),
     modifyDate: nowStamp()
   };
@@ -244,14 +244,15 @@ export function mergeIntoTemplate(template, title, cardBody) {
 
   const out = [];
   let first = true;
+  const safeTitle = cleanTitle(title);
   for (const section of sections) {
     if (section.heading === null) {
       // preamble: materialize the title placeholder, keep the rest
-      const preamble = section.content.join("\n").replaceAll("{{title}}", title).trimEnd();
+      const preamble = section.content.join("\n").replaceAll("{{title}}", safeTitle).trimEnd();
       if (first) {
         out.push(preamble);
         out.push("");
-        out.push(`# ${title}`);
+        out.push(`# ${safeTitle}`);
         out.push("");
         first = false;
       } else {
@@ -299,11 +300,12 @@ function sanitizeFileName(name) {
 /** Create the experience-entry draft (permanent-note style) in staging/_entries. */
 export function draftEntryFile(cfg, store, entry, { actor = "command" } = {}) {
   const warnings = [];
-  const vars = { title: entry.title, createDate: nowStamp(), modifyDate: nowStamp() };
+  const safeTitle = cleanTitle(entry.title || "未命名经验");
+  const vars = { title: safeTitle, createDate: nowStamp(), modifyDate: nowStamp() };
   vars._warnings = warnings;
   const template = renderCardTemplate(cfg, "permanent", vars);
   const body = [
-    `# ${entry.title}`,
+    `# ${safeTitle}`,
     "",
     "## Use",
     entry.use ?? "",
@@ -332,8 +334,9 @@ export function draftEntryFile(cfg, store, entry, { actor = "command" } = {}) {
 
 /** Confirm an experience entry: write the permanent note into experienceRoot. */
 export function settleEntry(cfg, store, entry, { actor = "command" } = {}) {
-  const text = entry.draftPath ? readStaging(cfg, entry.draftPath) : `# ${entry.title}\n\n${entry.model ?? ""}`;
-  const fileName = `${sanitizeFileName(entry.title)}.md`;
+  const safeTitle = cleanTitle(entry.title || "未命名经验");
+  const text = entry.draftPath ? readStaging(cfg, entry.draftPath) : `# ${safeTitle}\n\n${entry.model ?? ""}`;
+  const fileName = `${sanitizeFileName(safeTitle)}.md`;
   const finalRel = `${path.relative(cfg.vaultPath, experienceRoot(cfg)).split(path.sep).join("/")}/${fileName}`;
   const finalTarget = safeJoin(cfg.vaultPath, finalRel);
   mkdirSync(path.dirname(finalTarget), { recursive: true });

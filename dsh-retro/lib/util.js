@@ -100,6 +100,14 @@ export function textOf(message) {
   return String(content ?? "");
 }
 
+/** Normalize a title: strip leading "#" marks and stray markdown decorations. */
+export function cleanTitle(text) {
+  return String(text ?? "")
+    .replace(/^#{1,6}\s*/, "")
+    .replace(/[#*_`]/g, "")
+    .trim();
+}
+
 /** Parse a markdown file's frontmatter (minimal YAML subset: strings, numbers, booleans, string arrays). */
 export function parseFrontmatter(text) {
   const m = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/.exec(text);

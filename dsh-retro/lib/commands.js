@@ -455,7 +455,22 @@ async function runBlog(ctx, store, cfg, invocation) {
     if (sub === "draft") {
       const opts = flags(args.slice(1));
       const [source] = opts._;
-      if (!source) return err("用法：/blog draft <notePath|cardId> [--tags a,b] [--category x]");
+      if (!source) {
+        // 友好提示：列出可直接作为来源的已落库卡片与最近笔记
+        const approved = store.listCards("approved").filter((c) => c.vaultNote).slice(-5);
+        const lines = [
+          "用法：/blog draft <notePath|cardId> [--tags a,b] [--category x]",
+          "（notePath 为 vault 内相对路径，如 03_Full_Notes/xxx.md；路径含空格/特殊字符时用引号包裹）",
+          ""
+        ];
+        if (approved.length > 0) {
+          lines.push("可选卡片（cardId）：");
+          for (const c of approved) lines.push(`- ${c.id}「${c.title}」→ ${c.vaultNote}`);
+        } else {
+          lines.push("（暂无已落库卡片；可先用 /retro review <id> keep 落库，或直接指定笔记路径）");
+        }
+        return ok(lines.join("\n"));
+      }
       const card = source.startsWith("rc-") ? store.getCard(source) : null;
       const result = draftBlogFromNote(cfg, store, { notePath: card ? undefined : source, card, actor: "command:blog" });
       if (!result.ok) return err(result.error);

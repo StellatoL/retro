@@ -5,7 +5,7 @@ import path from "node:path";
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync, existsSync } from "node:fs";
 import os from "node:os";
 
-import { buildTranscript, extractEvolutionSuggestions } from "../lib/distiller.js";
+import { buildTranscript, extractEvolutionSuggestions, cleanTitle } from "../lib/distiller.js";
 import { attachCollector } from "../lib/collectors.js";
 import { RetroStore } from "../lib/store.js";
 import { dedupeSuggestions, proposeUpdate, adoptProposal, updateMoc, MOC_FILENAME } from "../lib/evolvor.js";
@@ -66,6 +66,31 @@ test("extractEvolutionSuggestions pulls the evolution section items", () => {
   assert.equal(items.length, 2);
   assert.ok(items[0].includes("X 坑"));
   assert.ok(items[1].includes("表格"));
+});
+
+test("extractEvolutionSuggestions handles numbered lists", () => {
+  const md = [
+    "## 进化建议",
+    "",
+    "1. 将 curl -4 沉淀为固定排查技能",
+    "2、把 6 模块拆解写入工作流模板",
+    "3) 工具失败时换用替代工具",
+    "",
+    "## 下周重点",
+    "1. 不算建议"
+  ].join("\n");
+  const items = extractEvolutionSuggestions(md);
+  assert.equal(items.length, 3);
+  assert.ok(items[0].includes("curl -4"));
+  assert.ok(items[1].includes("6 模块"));
+  assert.ok(items[2].includes("替代工具"));
+});
+
+test("cleanTitle strips heading marks and decorations", () => {
+  assert.equal(cleanTitle("## 项目目标（一句话）"), "项目目标（一句话）");
+  assert.equal(cleanTitle("### 复盘"), "复盘");
+  assert.equal(cleanTitle("# 标题"), "标题");
+  assert.equal(cleanTitle("**加粗** 标题"), "加粗 标题");
 });
 
 // ---- collectors ----

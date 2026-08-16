@@ -1,14 +1,16 @@
 // dsh-retro: distiller — turns session event logs into structured retro cards
 // and weekly digests via ctx.llm (map-reduce over long transcripts).
 import { BlockAssembler, createUserMessage } from "@deepseek-ai/dsh-llm";
-import { clip, textOf } from "./util.js";
+import { clip, textOf, cleanTitle } from "./util.js";
+export { cleanTitle } from "./util.js";
 
 const RETRO_SYSTEM = `你是复盘教练（retro coach）。基于提供的会话事实材料，生成一份"经验复盘卡片"初稿。
 
 必须遵守：
 1. 只写材料中真实发生的事实；不确定的标注"（存疑）"，绝不编造。
 2. 正文用中文，具体、诚实，保留可复现代码/命令/文件路径；拒绝空话套话。
-3. 结构严格如下（Markdown 小节）：
+3. 第一行输出一级标题：# <复盘标题>（一句话概括本次复盘主题，≤20 字，不要用 ##）。
+4. 标题之后，结构严格如下（Markdown 小节）：
    ## 项目目标（一句话）
    ## 环境与栈
    ## 关键过程（3-6 条要点）
@@ -16,7 +18,7 @@ const RETRO_SYSTEM = `你是复盘教练（retro coach）。基于提供的会�
    ## 关键经验（可复用到下一个工程的通用经验，2-5 条）
    ## 行动项（- [ ] 形式）
    ## 参考链接（如有）
-4. 正文结束后输出分隔线，然后输出 "## 待确认问题"，列出 3-8 个需要向用户确认的问题（只列问题，不代答），例如：哪些结论你希望保留？这个踩坑是否值得沉淀为永久经验？`;
+5. 正文结束后输出分隔线，然后输出 "## 待确认问题"，列出 3-8 个需要向用户确认的问题（只列问题，不代答），例如：哪些结论你希望保留？这个踩坑是否值得沉淀为永久经验？`;
 
 const WEEKLY_SYSTEM = `你是周报编辑。基于本周各会话的摘要与统计，生成一份"本周复盘汇总"卡片。
 
@@ -143,6 +145,7 @@ export async function distillWeekly(ctx, cfg, summaries, pending, { signal } = {
 
 /**
  * Extract the "## 进化建议" section from a weekly card into plain list items.
+ * Supports "- "/"* " bullets and numbered lists ("1. ", "1、", "1)").
  * Pure function (testable, no LLM).
  */
 export function extractEvolutionSuggestions(markdown) {
@@ -156,8 +159,8 @@ export function extractEvolutionSuggestions(markdown) {
       continue;
     }
     if (!inSection) continue;
-    if (/^[-*]\s+/.test(line)) {
-      const text = line.replace(/^[-*]\s+/, "").trim();
+    if (/^[-*]\s+/.test(line) || /^\d+[.、)）]\s*/.test(line)) {
+      const text = line.replace(/^[-*]\s+|^\d+[.、)）]\s*/, "").trim();
       if (text) items.push(text);
     }
   }
@@ -219,8 +222,8 @@ async function reduceTranscript(ctx, cfg, transcript, { signal }) {
 }
 
 function guessTitle(markdown) {
-  const m = /^#\s+(.+)$/m.exec(markdown);
-  if (m) return m[1].trim();
+  const m = /^#{1,6}\s+(.+)$/m.exec(markdown);
+  if (m) return cleanTitle(m[1]);
   const line = markdown.split("\n").find((l) => l.trim().length > 0);
-  return line ? clip(line.trim(), 40) : "未命名复盘";
+  return line ? clip(cleanTitle(line), 40) : "未命名复盘";
 }
