@@ -2,7 +2,7 @@
 // and the human-confirmed settle/discard flow. Host-side node:fs only.
 import path from "node:path";
 import { mkdirSync, existsSync, readFileSync, writeFileSync } from "node:fs";
-import { atomicWrite, loadTemplate, renderTemplater, safeJoin, fallbackTemplate, nowStamp, stampNow, uniqueFileName, slugify, readOptional, cleanTitle } from "./util.js";
+import { atomicWrite, loadTemplate, renderTemplater, safeJoin, fallbackTemplate, nowStamp, stampNow, uniqueFileName, slugify, readOptional, cleanTitle, clip } from "./util.js";
 
 /** Absolute staging dir (vault/stagingDir). */
 export function stagingRoot(cfg) {
@@ -286,6 +286,32 @@ export function mergeIntoTemplate(template, title, cardBody) {
 
 function normalizeHeading(heading) {
   return String(heading).replace(/[#\d.\s:：\-—()（）【】\[\]]/g, "").toLowerCase();
+}
+
+/**
+ * Extract experience-entry fields from a (user-reviewed) card body by section:
+ * 项目目标 → use；关键经验 → model；关键过程 → example；踩坑与根因 → pitfalls；参考链接 → links。
+ * Pure function (testable); falls back to empty strings/lists when a section is missing.
+ */
+export function extractEntryFromCard(body) {
+  const sections = splitSections(String(body ?? ""));
+  const find = (keywords) =>
+    sections.find((s) => s.heading && keywords.some((k) => normalizeHeading(s.heading).includes(k)));
+  const text = (s) => (s ? s.content.join("\n").trim() : "");
+  const items = (s) =>
+    s
+      ? s.content
+          .map((l) => l.replace(/^[-*]\s+/, "").trim())
+          .filter(Boolean)
+          .slice(0, 12)
+      : [];
+
+  const use = clip(text(find(["项目目标", "projectgoal", "project-goal"])), 300);
+  const model = clip(text(find(["关键经验", "keytakeaways"])), 600);
+  const example = clip(text(find(["关键过程", "process", "architecture", "逻辑"])), 600);
+  const pitfalls = items(find(["踩坑", "pitfall", "debug"]));
+  const links = items(find(["参考链接", "links", "resource", "参考"])).filter((l) => /^https?:\/\//.test(l) || l.startsWith("[["));
+  return { use, model, example, pitfalls, links };
 }
 
 /** Split a drafted card file into { title, body } (frontmatter stripped). */

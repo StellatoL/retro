@@ -13,7 +13,7 @@ import { RetroStore } from "../lib/store.js";
 import { loadConfig, saveConfig, retroDir, configPath } from "../lib/config.js";
 import {
   ensureDirs, writeStaging, readStaging, renderCardTemplate, draftCardFiles, settleCard, draftEntryFile, settleEntry, splitCardFile,
-  stripQuestionsSection, mergeIntoTemplate
+  stripQuestionsSection, mergeIntoTemplate, extractEntryFromCard
 } from "../lib/settler.js";
 
 function tmpVault() {
@@ -220,6 +220,45 @@ test("stripQuestionsSection removes review footer", () => {
   assert.ok(stripQuestionsSection(body).includes("关键经验"));
   const plain = "## 只有正文";
   assert.equal(stripQuestionsSection(plain), "## 只有正文");
+});
+
+test("extractEntryFromCard maps card sections to entry fields", () => {
+  const body = [
+    "# 复盘标题",
+    "",
+    "## 项目目标（一句话）",
+    "实现 X 系统",
+    "",
+    "## 关键经验",
+    "- 用 A 替代 B 的通用模式",
+    "- 优先本地源码排查",
+    "",
+    "## 关键过程",
+    "步骤1 → 步骤2",
+    "",
+    "## 踩坑与根因",
+    "- 现象：编译失败",
+    "- 修复：加依赖",
+    "",
+    "## 参考链接",
+    "- https://example.com/doc",
+    "- 非链接文本（应被过滤）"
+  ].join("\n");
+  const e = extractEntryFromCard(body);
+  assert.ok(e.use.includes("实现 X 系统"));
+  assert.ok(e.model.includes("用 A 替代 B"));
+  assert.ok(e.example.includes("步骤1"));
+  assert.equal(e.pitfalls.length, 2);
+  assert.ok(e.pitfalls[0].includes("编译失败"));
+  assert.deepEqual(e.links, ["https://example.com/doc"]);
+});
+
+test("extractEntryFromCard falls back to empty fields", () => {
+  const e = extractEntryFromCard("## 无关小节\n内容");
+  assert.equal(e.use, "");
+  assert.equal(e.model, "");
+  assert.deepEqual(e.pitfalls, []);
+  assert.deepEqual(e.links, []);
 });
 
 test("mergeIntoTemplate fills template sections and appends extras", () => {

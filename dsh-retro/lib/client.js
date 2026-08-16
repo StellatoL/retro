@@ -50,10 +50,18 @@ window.__ModuleLoader__.load({
       document.body.appendChild(panel);
 
       var open = false;
+      var pollTimer = null;
+      var REFRESH_MS = 30000;
       fab.addEventListener("click", function () {
         open = !open;
-        if (open) { panel.style.display = "block"; refresh(); }
-        else panel.style.display = "none";
+        if (open) {
+          panel.style.display = "block";
+          refresh();
+          if (pollTimer === null) pollTimer = setInterval(refresh, REFRESH_MS);
+        } else {
+          panel.style.display = "none";
+          if (pollTimer !== null) { clearInterval(pollTimer); pollTimer = null; }
+        }
       });
 
       function refresh() {
@@ -115,6 +123,7 @@ window.__ModuleLoader__.load({
 
       ctx.effect(function () {
         return function () {
+          if (pollTimer !== null) clearInterval(pollTimer);
           fab.remove();
           panel.remove();
         };

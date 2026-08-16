@@ -3,7 +3,7 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import { validateConfig, renderConfig, saveConfig as persistConfig, configPath, retroDir } from "./config.js";
 import { distillSession, distillWeekly } from "./distiller.js";
-import { draftCardFiles, settleCard, draftEntryFile, settleEntry, ensureDirs } from "./settler.js";
+import { draftCardFiles, settleCard, draftEntryFile, settleEntry, ensureDirs, readStaging, splitCardFile, stripQuestionsSection, extractEntryFromCard } from "./settler.js";
 import { draftBlogFromNote, publishBlogPost, captureBlogPosts, listBlogPosts } from "./publisher.js";
 import { proposeUpdate, adoptProposal, dedupeSuggestions, dedupeBlogPosts, updateMoc } from "./evolvor.js";
 import { renderReport } from "./report.js";
@@ -262,18 +262,21 @@ async function runReview(ctx, store, cfg, rest) {
     });
     let extra = "";
     if (result.ok && result.status === "approved") {
+      // 从用户审阅后的卡片正文自动提取经验字段（而非空模板）
+      let extracted = { use: "", model: "", example: "", pitfalls: [], links: [] };
+      try {
+        const stagedText = readStaging(cfg, card.stagingPath);
+        extracted = extractEntryFromCard(stripQuestionsSection(splitCardFile(stagedText).body));
+      } catch { /* 提取失败则用空字段 */ }
       // Generate an experience-entry draft from the approved card's takeaways.
       const entry = store.addEntry({
         title: card.title,
-        model: "",
-        example: "",
-        pitfalls: [],
-        links: card.vaultNote ? [`[[${card.vaultNote.replace(/\.md$/, "")}]]`] : [],
+        ...extracted,
+        links: [...extracted.links, card.vaultNote ? `[[${card.vaultNote.replace(/\.md$/, "")}]]` : null].filter(Boolean),
         tags: ["experience"],
         source: "card",
         cardId: card.id,
-        status: "drafted",
-        use: ""
+        status: "drafted"
       });
       const { relPath } = draftEntryFile(cfg, store, entry);
       extra = `\n已生成经验条目草稿：${relPath} → 确认沉淀为永久经验：\`/retro entry keep ${entry.id}\``;
