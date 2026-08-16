@@ -37,6 +37,8 @@ export function attachCollector(ctx, store, cfg) {
         if (cfg.autoProposeOnGoalComplete !== false && phase === "complete" && sid) {
           if (seenGoalSessions.has(sid)) return;
           seenGoalSessions.add(sid);
+          // 该会话已有复盘卡片（草稿/已落库）时不再重复建议
+          if (store.cardForSession(sid)) return;
           const objective = goal?.objective ?? "（无目标描述）";
           store.addMaterial({ sessionId: sid, workspace, kind: "goal-complete", summary: `目标完成：${objective}`, importance: RETRO_IMPORTANCE.goal });
           store.addProposal({ kind: "retro-suggest", sessionId: sid, reason: "goal-complete", detail: objective });

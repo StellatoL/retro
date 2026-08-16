@@ -119,6 +119,13 @@ test("collector proposes on goal-complete once per session", () => {
   assert.equal(store.listMaterials().filter((m) => m.kind === "goal-complete").length, 1);
 });
 
+test("collector skips goal-complete propose when the session already has a card", () => {
+  const { store, handlers } = collectorHarness({ autoProposeOnGoalComplete: true });
+  store.addCard({ sessionIds: ["s1"], title: "已有复盘", status: "drafted", source: "test" });
+  handlers["session/event"](...ev("s1", "goal/change", { goal: { phase: "complete", objective: "目标" } }));
+  assert.equal(store.listProposals("pending").length, 0);
+});
+
 test("collector samples feedback, intent, tool-error, and disposal", () => {
   const { store, handlers } = collectorHarness({ autoProposeOnGoalComplete: true });
   handlers["session/event"](...ev("s1", "feedback/record", { rating: 5 }));

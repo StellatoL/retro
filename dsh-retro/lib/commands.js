@@ -105,7 +105,10 @@ function renderQueue(store, cfg) {
   const warnings = validateConfig(cfg);
   const lines = ["## 复盘队列", ""];
 
-  const suggestions = store.listProposals("pending").filter((p) => p.kind === "retro-suggest");
+  // 待复盘建议：过滤掉已有复盘卡片的会话（避免重复建议）
+  const suggestions = store
+    .listProposals("pending")
+    .filter((p) => p.kind === "retro-suggest" && !store.cardForSession(p.sessionId));
   if (suggestions.length > 0) {
     lines.push("### 🎯 待复盘建议");
     for (const p of suggestions.slice(-5).reverse()) {
