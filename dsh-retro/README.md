@@ -54,7 +54,8 @@ New-Item -ItemType Junction -Path "$env:USERPROFILE\.dsh\profiles\web\node_modul
 | `/retro entry keep <id>` | 经验条目沉淀为永久笔记 |
 | `/retro config [k v]` | 查看/修改配置（`~/.dsh/retro/config.json`） |
 | `/retro adopt <id\|all>` | 采纳进化提案（skill/AGENTS.md，自动 .bak） |
-| `/weekly [--force]` | 本周复盘汇总 |
+| `/retro report` | 生成 HTML 复盘面板（自包含，自动用浏览器打开） |
+| `/weekly [--force]` | 本周复盘汇总（自动提炼进化提案 + 刷新经验库索引） |
 | `/blog list` | 文章列表 |
 | `/blog draft <notePath\|cardId> [--tags a,b]` | 生成 blog 草稿（draft:true，生产不发布） |
 | `/blog publish <slug> [--push]` | 发布（git 提交，可选推送） |
@@ -64,6 +65,12 @@ New-Item -ItemType Junction -Path "$env:USERPROFILE\.dsh\profiles\web\node_modul
 
 - `retro_capture`：会话中标记值得沉淀的素材
 - `retro_draft`：为指定会话生成复盘草稿（写入暂存区）
+
+## 进化闭环
+
+1. `/weekly` 生成周报后，自动把"进化建议"提炼为**结构化提案**（skill/AGENTS.md 两类）；
+2. `/retro queue` 可见待采纳提案；`/retro adopt <id>` 确认后写入 `~/.dsh/skills/retro-writing/SKILL.md` 或 `~/.dsh/AGENTS.md`（原文件自动备份 `.bak`）——下次对话模型即遵循新规则；
+3. 经验条目沉淀（`/retro entry keep`）后自动刷新经验库 MOC 索引（`Index/06_Retro/经验库/00_索引.md`）。
 
 ## 数据与安全
 

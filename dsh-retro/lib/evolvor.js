@@ -1,12 +1,15 @@
-// dsh-retro: evolvor — experience library, dedupe suggestions, and
+// dsh-retro: evolvor — experience library, MOC index, dedupe suggestions, and
 // SKILL.md / AGENTS.md evolution proposals (AI drafts, user adopts).
 import path from "node:path";
 import os from "node:os";
 import { fileURLToPath } from "node:url";
-import { mkdirSync } from "node:fs";
-import { atomicWrite, nowStamp, readOptional, safeJoin } from "./util.js";
-import { readStaging, writeStaging } from "./settler.js";
+import { mkdirSync, readdirSync } from "node:fs";
+import { atomicWrite, nowStamp, parseFrontmatter, readOptional, safeJoin } from "./util.js";
+import { experienceRoot, readStaging, writeStaging } from "./settler.js";
 import { listBlogPosts } from "./publisher.js";
+
+/** Index file name inside the experience root. */
+export const MOC_FILENAME = "00_索引.md";
 
 function skillsDir() {
   const home = process.env.DSH_HOME || path.join(os.homedir(), ".dsh");
@@ -143,4 +146,50 @@ export function dedupeBlogPosts(cfg, title) {
     }
   }
   return hits.slice(0, 5);
+}
+
+/**
+ * Maintain the experience-library MOC index (Index/06_Retro/经验库/00_索引.md):
+ * scans every entry note in the root (excluding the index itself) and rewrites
+ * the index with an up-to-date link list + a usage tip. Called after an entry
+ * settles and by /weekly. Safe to run on an empty library.
+ */
+export function updateMoc(cfg, store, { actor = "command" } = {}) {
+  const root = experienceRoot(cfg);
+  mkdirSync(root, { recursive: true });
+  const files = readdirSync(root)
+    .filter((f) => f.endsWith(".md") && f !== MOC_FILENAME)
+    .sort((a, b) => a.localeCompare(b, "zh"));
+
+  const entries = [];
+  for (const file of files) {
+    const text = readOptional(path.join(root, file)) ?? "";
+    const { data } = parseFrontmatter(text);
+    const name = file.replace(/\.md$/, "");
+    const tags = Array.isArray(data.Tags) ? data.Tags.join(", ") : Array.isArray(data.tags) ? data.tags.join(", ") : "";
+    const source = data.Source || "";
+    entries.push({ name, tags, source });
+  }
+
+  const lines = [
+    "---",
+    "Type: moc",
+    `modifyDate: ${nowStamp()}`,
+    `entryCount: ${entries.length}`,
+    "---",
+    "",
+    "# 经验库索引",
+    "",
+    "> 本索引由 dsh-retro 自动维护（经验条目沉淀或 /weekly 时刷新）。",
+    "> 每条经验是原子笔记：Use / Model / Example / Pitfalls / Links。",
+    "",
+    ...(entries.length === 0
+      ? ["（经验库为空：通过 /retro review <id> keep 落库后会自动生成经验条目，再 /retro entry keep <id> 沉淀到这里）"]
+      : entries.map((e) => `- [[${e.name}]]${e.tags ? ` — ${e.tags}` : ""}${e.source ? `（来源：${e.source}）` : ""}`))
+  ];
+
+  const mocPath = path.join(root, MOC_FILENAME);
+  atomicWrite(mocPath, lines.join("\n") + "\n");
+  store?.audit({ actor, action: "moc-update", target: `经验库/${MOC_FILENAME}`, ok: true, note: `${entries.length} 条` });
+  return { ok: true, path: `经验库/${MOC_FILENAME}`, count: entries.length };
 }

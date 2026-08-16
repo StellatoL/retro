@@ -1,10 +1,13 @@
-// dsh-retro: human-facing slash commands — /retro, /weekly, /blog, /retro config|review|entry|adopt|queue.
-import { validateConfig, renderConfig, saveConfig as persistConfig, configPath } from "./config.js";
+// dsh-retro: human-facing slash commands — /retro, /weekly, /blog, /retro config|review|entry|adopt|queue|report.
+import path from "node:path";
+import { spawn } from "node:child_process";
+import { validateConfig, renderConfig, saveConfig as persistConfig, configPath, retroDir } from "./config.js";
 import { distillSession, distillWeekly } from "./distiller.js";
 import { draftCardFiles, settleCard, draftEntryFile, settleEntry, ensureDirs } from "./settler.js";
 import { draftBlogFromNote, publishBlogPost, captureBlogPosts, listBlogPosts } from "./publisher.js";
-import { proposeUpdate, adoptProposal, dedupeSuggestions, dedupeBlogPosts } from "./evolvor.js";
-import { clip, todayStamp, nowStamp } from "./util.js";
+import { proposeUpdate, adoptProposal, dedupeSuggestions, dedupeBlogPosts, updateMoc } from "./evolvor.js";
+import { renderReport } from "./report.js";
+import { atomicWrite, clip, todayStamp, nowStamp } from "./util.js";
 
 /** Register all retro commands. */
 export function registerCommands(ctx, store, cfg) {
@@ -31,7 +34,7 @@ export function registerCommands(ctx, store, cfg) {
 function ok(text) { return { kind: "success", text }; }
 function err(text) { return { kind: "error", text }; }
 
-function parseArgs(raw) {
+export function parseArgs(raw) {
   const input = String(raw ?? "").trim();
   if (!input) return [];
   const out = [];
@@ -43,7 +46,7 @@ function parseArgs(raw) {
   return out;
 }
 
-function flags(args) {
+export function flags(args) {
   const out = { _: [] };
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
@@ -51,6 +54,10 @@ function flags(args) {
     if (m) {
       const key = m[1].replace(/-([a-z])/g, (_, c) => c.toUpperCase());
       out[key] = m[2] ?? true;
+      // `--key value` form: consume the following non-flag token as the value
+      if (out[key] === true && i + 1 < args.length && !args[i + 1].startsWith("--")) {
+        out[key] = args[++i];
+      }
     } else {
       out._.push(a);
     }
@@ -70,9 +77,27 @@ async function runRetro(ctx, store, cfg, invocation) {
     if (sub === "entry") return runEntry(store, cfg, rest);
     if (sub === "config") return runConfig(store, cfg, rest);
     if (sub === "adopt") return runAdopt(ctx, store, cfg, rest);
-    return err(`未知子命令 "${sub}"。用法：${invocation.rawInput.length ? "/retro queue" : "/retro [queue|draft|review|entry|config|adopt]"}`);
+    if (sub === "report") return runReport(store, cfg, rest);
+    return err(`未知子命令 "${sub}"。用法：${invocation.rawInput.length ? "/retro queue" : "/retro [queue|draft|review|entry|config|adopt|report]"}`);
   } catch (error) {
     return err(`/retro 失败：${String(error?.message ?? error)}`);
+  }
+}
+
+/** /retro report — render the HTML dashboard and open it in the default browser. */
+function runReport(store, cfg, rest) {
+  try {
+    const html = renderReport(store, cfg);
+    const outPath = path.join(retroDir(), "retro-report.html");
+    atomicWrite(outPath, html);
+    try {
+      const child = spawn("cmd", ["/c", "start", "", outPath], { stdio: "ignore", detached: true, windowsHide: true });
+      child.unref();
+    } catch { /* 打开浏览器失败不阻塞（仍返回路径） */ }
+    store.audit({ actor: "command:report", action: "render-report", target: outPath, ok: true });
+    return ok(`✅ 复盘面板已生成：${outPath}\n（已尝试在默认浏览器打开；如未弹出请手动打开该文件）`);
+  } catch (error) {
+    return err(`生成报告失败：${String(error?.message ?? error)}`);
   }
 }
 
@@ -263,7 +288,12 @@ function runEntry(store, cfg, rest) {
   if (!entry) return err(`经验条目不存在：${id}`);
   try {
     const result = settleEntry(cfg, store, entry);
-    return ok(`已沉淀为永久经验：${result.path}`);
+    let mocNote = "";
+    try {
+      const moc = updateMoc(cfg, store, { actor: "command:entry" });
+      mocNote = `\n经验库索引已刷新（${moc.count} 条）：${moc.path}`;
+    } catch { /* 索引失败不阻塞沉淀 */ }
+    return ok(`已沉淀为永久经验：${result.path}${mocNote}`);
   } catch (error) {
     return err(`沉淀失败：${String(error?.message ?? error)}`);
   }
@@ -355,6 +385,35 @@ async function runWeekly(ctx, store, cfg, invocation) {
     const card = store.addCard({ sessionIds: records.map((r) => r.header.id), title, source: "weekly" });
     const { relPath } = draftCardFiles(cfg, store, card, { markdown, templateKind: "weekly", actor: "command:weekly" });
 
+    // 进化闭环：把周报的"进化建议"提炼成结构化提案（skill/agents），
+    // 用户 /retro adopt <id> 确认后写入 ~/.dsh/skills 或 ~/.dsh/AGENTS.md。
+    const proposalLines = [];
+    try {
+      const { extractEvolutionSuggestions, distillProposals } = await import("./distiller.js");
+      const suggestions = extractEvolutionSuggestions(markdown);
+      if (suggestions.length > 0) {
+        const proposals = await distillProposals(ctx, cfg, suggestions, { signal });
+        for (const p of proposals) {
+          const result = proposeUpdate(cfg, store, {
+            kind: p.kind,
+            title: p.title,
+            content: p.content,
+            reason: p.reason,
+            actor: "command:weekly"
+          });
+          if (result.ok) proposalLines.push(`- ${result.id} [${p.kind}] ${p.title} → /retro adopt ${result.id}`);
+        }
+      }
+    } catch (error) {
+      proposalLines.push(`- （提案生成失败：${String(error?.message ?? error).slice(0, 120)}）`);
+    }
+
+    // 顺带刷新经验库 MOC 索引（如存在经验条目）。
+    try {
+      const { updateMoc } = await import("./evolvor.js");
+      updateMoc(cfg, store, { actor: "command:weekly" });
+    } catch { /* 经验库可能尚未使用，忽略 */ }
+
     store.updateMeta({ lastWeeklyCheck: new Date().toISOString(), weeklyCount: (meta.weeklyCount ?? 0) + 1 });
 
     const lines = [
@@ -365,6 +424,9 @@ async function runWeekly(ctx, store, cfg, invocation) {
       "",
       "请在 Obsidian 中审阅，勾选 keep/merge/discard 后：/retro review <id> keep 落库。"
     ];
+    if (proposalLines.length > 0) {
+      lines.push("", "🧬 本周进化提案（/retro adopt <id> 采纳）：", ...proposalLines);
+    }
     if (errors.length > 0) lines.push("", "⚠️ " + errors.join("；"));
     return ok(lines.join("\n"));
   } catch (error) {

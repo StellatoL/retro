@@ -141,6 +141,65 @@ export async function distillWeekly(ctx, cfg, summaries, pending, { signal } = {
   return complete(ctx, cfg, `周报材料：\n${digestInput}\n\n请生成本周复盘汇总卡片。`, { signal, system: WEEKLY_SYSTEM });
 }
 
+/**
+ * Extract the "## 进化建议" section from a weekly card into plain list items.
+ * Pure function (testable, no LLM).
+ */
+export function extractEvolutionSuggestions(markdown) {
+  const lines = String(markdown ?? "").split(/\r?\n/);
+  const items = [];
+  let inSection = false;
+  for (const raw of lines) {
+    const line = raw.trim();
+    if (/^##\s+/.test(line)) {
+      inSection = line.includes("进化建议");
+      continue;
+    }
+    if (!inSection) continue;
+    if (/^[-*]\s+/.test(line)) {
+      const text = line.replace(/^[-*]\s+/, "").trim();
+      if (text) items.push(text);
+    }
+  }
+  return items;
+}
+
+/**
+ * Turn weekly evolution suggestions into structured proposals:
+ * [{ kind: 'skill'|'agents', title, content, reason }].
+ * One LLM call for the whole batch; falls back to plain entries on failure
+ * (the caller decides whether to keep them).
+ */
+export async function distillProposals(ctx, cfg, suggestions, { signal } = {}) {
+  if (!suggestions || suggestions.length === 0) return [];
+  const prompt = [
+    "把以下每周进化建议整理成结构化提案（用于更新 AI 的复盘技能 SKILL.md 或全局偏好 AGENTS.md）。",
+    "输出严格 JSON 数组，每项：{kind, title, content, reason}",
+    "- kind: 更新技能取 \"skill\"，更新全局偏好/习惯取 \"agents\"",
+    "- title: 提案短标题（≤20 字）",
+    "- content: 可直接追加到目标文件的 Markdown 片段（规则/要点，≤150 字，具体可操作，不含空话）",
+    "- reason: 一句话说明为什么值得沉淀（≤40 字）",
+    "只输出 JSON，不要其它文字。",
+    "",
+    "建议：",
+    ...suggestions.map((s, i) => `${i + 1}. ${s}`)
+  ].join("\n");
+  const raw = await complete(ctx, cfg, prompt, { signal });
+  const m = /\[[\s\S]*\]/.exec(raw);
+  if (!m) throw new Error("进化提案解析失败：输出中无 JSON 数组");
+  const parsed = JSON.parse(m[0]);
+  if (!Array.isArray(parsed)) throw new Error("进化提案解析失败：非数组");
+  return parsed
+    .filter((p) => p && typeof p === "object" && (p.kind === "skill" || p.kind === "agents"))
+    .map((p) => ({
+      kind: p.kind,
+      title: String(p.title ?? "进化建议").slice(0, 20),
+      content: String(p.content ?? "").slice(0, 500),
+      reason: String(p.reason ?? "").slice(0, 60)
+    }))
+    .filter((p) => p.content.length > 0);
+}
+
 async function reduceTranscript(ctx, cfg, transcript, { signal }) {
   if (transcript.length <= cfg.distillMaxChars) return transcript;
   const chunks = [];

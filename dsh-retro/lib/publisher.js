@@ -186,7 +186,24 @@ export function captureBlogPosts(cfg, store, { scope = "published", actor = "com
   return { ok: true, created, skipped: targets.length - created.length };
 }
 
-async function runGit(cfg, args) {
+// Git runner seam: replaceable in tests via setGitRunnerForTest (avoids
+// spawning real git in sandboxed/unit environments).
+let gitRunner = async (cfg, args) => {
   const { stdout, stderr } = await execFileAsync("git", args, { cwd: cfg.blogPath });
   return (stdout || stderr).trim();
+};
+
+/** Test-only seam: swap the git runner (returns the previous runner). */
+export function setGitRunnerForTest(runner) {
+  const previous = gitRunner;
+  if (runner === null) gitRunner = async (cfg, args) => {
+    const { stdout, stderr } = await execFileAsync("git", args, { cwd: cfg.blogPath });
+    return (stdout || stderr).trim();
+  };
+  else gitRunner = runner;
+  return previous;
+}
+
+async function runGit(cfg, args) {
+  return gitRunner(cfg, args);
 }
