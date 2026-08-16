@@ -1,7 +1,8 @@
 // dsh-retro client bundle — served at runtime by dsh-client-modules
 // (`GET /plugins/dsh-retro/client.js`), executed by the shell's __ModuleLoader__.
 // Hand-written in the official bundle format: CJS-style factory, no bundler.
-// Zero React dependency: the panel is plain DOM + fetch("/retro/api").
+// The panel is plain DOM + fetch("/retro/api"); the entry point is a native
+// sidebar slot (`sidebar.footer.action`) with a floating-button fallback.
 window.__ModuleLoader__.load({
   id: "dsh-retro",
   factory: (require) => {
@@ -9,12 +10,17 @@ window.__ModuleLoader__.load({
     var exports = module.exports;
     Object.defineProperty(exports, Symbol.toStringTag, { value: "Module" });
 
-    // No client-side service dependencies: the panel is plain DOM + fetch.
+    // No client-side service dependencies declared: we probe ctx.get("slots")
+    // at apply time and fall back to a floating button when unavailable.
     var inject = [];
+
+    var React = require("react");
 
     var PANEL_CSS = [
       ".dsh-retro-fab{position:fixed;right:16px;bottom:16px;z-index:2147483000;background:var(--dsw-alias-accent,#3b82f6);color:#fff;border:none;border-radius:999px;padding:9px 16px;font-size:13px;cursor:pointer;box-shadow:0 2px 10px rgba(0,0,0,.35);font-family:var(--dsw-font-family,system-ui)}",
       ".dsh-retro-fab:hover{filter:brightness(1.1)}",
+      ".dsh-retro-sidebar-btn{display:flex;align-items:center;gap:6px;width:100%;background:none;border:none;color:var(--dsw-alias-label-secondary,#c9ced8);cursor:pointer;font-size:13px;padding:6px 8px;border-radius:8px;font-family:var(--dsw-font-family,system-ui)}",
+      ".dsh-retro-sidebar-btn:hover{background:var(--dsw-alias-interactive-bg-hover-solid,rgba(255,255,255,.06));color:var(--dsw-alias-label-primary,#e6e8ee)}",
       ".dsh-retro-panel{display:none;position:fixed;right:16px;bottom:60px;z-index:2147483001;width:430px;max-height:72vh;overflow:auto;background:var(--dsw-alias-bg-base,#161a22);color:var(--dsw-alias-label-primary,#e6e8ee);border:1px solid var(--dsw-alias-border-l1,#ffffff22);border-radius:12px;padding:14px 16px;box-shadow:0 10px 36px rgba(0,0,0,.45);font-family:var(--dsw-font-family,system-ui);font-size:13px;line-height:1.5}",
       ".dsh-retro-panel h2{margin:10px 0 6px;font-size:13px;color:var(--dsw-alias-label-secondary,#c9ced8)}",
       ".dsh-retro-panel h2:first-child{margin-top:0}",
@@ -32,7 +38,7 @@ window.__ModuleLoader__.load({
 
     function apply(ctx) {
       if (typeof document === "undefined") return;
-      // CSS（幂等）
+
       if (!document.getElementById("dsh-retro-css")) {
         var style = document.createElement("style");
         style.id = "dsh-retro-css";
@@ -40,19 +46,14 @@ window.__ModuleLoader__.load({
         document.head.appendChild(style);
       }
 
-      var fab = document.createElement("button");
-      fab.className = "dsh-retro-fab";
-      fab.textContent = "复盘";
-      fab.title = "dsh-retro 复盘面板";
-      var panel = document.createElement("div");
-      panel.className = "dsh-retro-panel";
-      document.body.appendChild(fab);
-      document.body.appendChild(panel);
-
       var open = false;
       var pollTimer = null;
       var REFRESH_MS = 30000;
-      fab.addEventListener("click", function () {
+      var panel = document.createElement("div");
+      panel.className = "dsh-retro-panel";
+      document.body.appendChild(panel);
+
+      function toggle() {
         open = !open;
         if (open) {
           panel.style.display = "block";
@@ -62,7 +63,7 @@ window.__ModuleLoader__.load({
           panel.style.display = "none";
           if (pollTimer !== null) { clearInterval(pollTimer); pollTimer = null; }
         }
-      });
+      }
 
       function refresh() {
         panel.innerHTML = "<div style='opacity:.6;padding:8px'>加载中…</div>";
@@ -121,13 +122,51 @@ window.__ModuleLoader__.load({
         return "<div class='dsh-retro-stat'><b>" + esc(value) + "</b><span>" + esc(label) + " · " + esc(hint) + "</span></div>";
       }
 
-      ctx.effect(function () {
-        return function () {
-          if (pollTimer !== null) clearInterval(pollTimer);
-          fab.remove();
-          panel.remove();
-        };
-      }, "dsh-retro: panel");
+      function cleanup() {
+        if (pollTimer !== null) clearInterval(pollTimer);
+        panel.remove();
+      }
+
+      // Native sidebar mount (sidebar.footer.action) with floating-button fallback.
+      var slots = ctx.get("slots");
+      var mounted = false;
+      if (slots && typeof slots.inject === "function") {
+        function RetroAction() {
+          return React.createElement(
+            "button",
+            { className: "dsh-retro-sidebar-btn", onClick: toggle, title: "dsh-retro 复盘面板" },
+            "\u{1F5C2} 复盘"
+          );
+        }
+        try {
+          slots.inject("sidebar.footer.action", function () {
+            return slots.register(
+              { name: "sidebar.footer.action", inject: function () { return {}; } },
+              RetroAction
+            );
+          });
+          mounted = true;
+        } catch (error) {
+          mounted = false;
+        }
+      }
+      if (!mounted) {
+        var fab = document.createElement("button");
+        fab.className = "dsh-retro-fab";
+        fab.textContent = "复盘";
+        fab.title = "dsh-retro 复盘面板";
+        fab.addEventListener("click", toggle);
+        document.body.appendChild(fab);
+        ctx.effect(function () {
+          return function () {
+            cleanup();
+            fab.remove();
+          };
+        }, "dsh-retro: panel");
+        return;
+      }
+
+      ctx.effect(function () { return cleanup; }, "dsh-retro: panel");
     }
 
     exports.apply = apply;
