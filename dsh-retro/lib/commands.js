@@ -467,13 +467,14 @@ async function runBlog(ctx, store, cfg, invocation) {
 
     if (sub === "draft") {
       const opts = flags(args.slice(1));
-      const [source] = opts._;
+      // 路径可能含空格：把剩余非 flag token 重新拼回（无需引号）
+      const source = opts._.join(" ").trim();
       if (!source) {
         // 友好提示：列出可直接作为来源的已落库卡片与最近笔记
         const approved = store.listCards("approved").filter((c) => c.vaultNote).slice(-5);
         const lines = [
           "用法：/blog draft <notePath|cardId> [--tags a,b] [--category x]",
-          "（notePath 为 vault 内相对路径，如 Index/03_Full_Notes/04_Retro/xxx.md；路径含空格/特殊字符时用引号包裹）",
+          "（notePath 为 vault 内相对路径，如 Index/03_Full_Notes/04_Retro/xxx.md；含空格时无需引号，直接输入完整路径）",
           ""
         ];
         if (approved.length > 0) {
