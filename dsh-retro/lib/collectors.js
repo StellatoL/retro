@@ -10,6 +10,9 @@ const RETRO_IMPORTANCE = { goal: 3, feedback: 2, intent: 2, disposed: 1, toolErr
 
 export function attachCollector(ctx, store, cfg) {
   const seenGoalSessions = new Set();
+  // callId → 工具名（tool/result 里没有工具名，只能与配对的 tool/call 关联）
+  const callIdToTool = new Map();
+  const MAX_CALL_TRACK = 5000;
 
   ctx.on("session/event", (session, event) => {
     try {
@@ -31,6 +34,18 @@ export function attachCollector(ctx, store, cfg) {
     const workspace = session?.header?.cwd ?? session?.cwd ?? null;
 
     switch (event.type) {
+      case "tool/call": {
+        const data = event.data ?? {};
+        if (typeof data.callId === "string" && typeof data.name === "string") {
+          callIdToTool.set(data.callId, data.name);
+          if (callIdToTool.size > MAX_CALL_TRACK) {
+            // 粗粒度防膨胀：清掉最早的 1/4
+            const keys = [...callIdToTool.keys()].slice(0, Math.floor(MAX_CALL_TRACK / 4));
+            for (const k of keys) callIdToTool.delete(k);
+          }
+        }
+        break;
+      }
       case "goal/change": {
         const goal = event.data?.goal ?? event.data;
         const phase = goal?.phase ?? event.data?.phase;
@@ -69,10 +84,16 @@ export function attachCollector(ctx, store, cfg) {
       }
       case "tool/result": {
         const data = event.data ?? {};
-        const isError = data.ok === false || data.error !== undefined || data.kind === "error";
+        // 真实结构：data = { turn, step, message, meta?, error? }
+        // 错误标志：data.error 存在（对象 {name, code}）或 message 块 isError === true
+        const block = data.message?.content?.[0];
+        const isError = data.error !== undefined || block?.isError === true;
         if (isError && sid) {
-          const tool = data.name ?? data.tool ?? "tool";
-          const detail = String(data.error ?? data.message ?? "").slice(0, 200);
+          const callId = data.message?.source?.callId ?? block?.toolCallId ?? null;
+          const tool = (typeof callId === "string" && callIdToTool.get(callId)) ?? data.name ?? "tool";
+          const code = data.error?.code ?? data.error?.name ?? null;
+          const text = typeof block?.content?.[0]?.text === "string" ? block.content[0].text : "";
+          const detail = (code ? `${code}` : "") + (text ? (code ? `：` : "") + text.slice(0, 180) : "");
           store.addMaterial({ sessionId: sid, workspace, kind: "tool-error", summary: `工具失败 ${tool}${detail ? `：${detail}` : ""}`, importance: RETRO_IMPORTANCE.toolError });
         }
         break;

@@ -69,7 +69,7 @@ export async function complete(ctx, cfg, prompt, { signal, system } = {}) {
 }
 
 /** Build a transcript from one session's events (cheap heuristics, no LLM). */
-export function buildTranscript(events) {
+export function buildTranscript(events, toolNames = new Map()) {
   const lines = [];
   const push = (prefix, text) => {
     const t = String(text ?? "").trim();
@@ -88,13 +88,23 @@ export function buildTranscript(events) {
           break;
         case "tool/call": {
           const name = data.name ?? data.tool ?? "tool";
+          if (typeof data.callId === "string") toolNames.set(data.callId, name);
           const args = data.arguments ?? data.input ?? data.params ?? {};
           push("工具调用:", `${name}(${clip(JSON.stringify(args), 300)})`);
           break;
         }
         case "tool/result": {
-          const ok = data.ok !== false && data.error === undefined;
-          if (!ok) push("工具失败:", `${data.name ?? data.tool ?? "tool"} ${clip(String(data.error ?? data.message ?? ""), 300)}`);
+          // 真实结构：data = { turn, step, message, meta?, error? }；
+          // 工具名需经 callId 与 tool/call 配对。
+          const block = data.message?.content?.[0];
+          const isError = data.error !== undefined || block?.isError === true;
+          if (isError) {
+            const callId = data.message?.source?.callId ?? block?.toolCallId ?? null;
+            const name = (typeof callId === "string" && toolNames.get(callId)) ?? "tool";
+            const code = data.error?.code ?? data.error?.name ?? null;
+            const text = typeof block?.content?.[0]?.text === "string" ? block.content[0].text : "";
+            push("工具失败:", `${name}${code ? ` [${code}]` : ""} ${clip(text || "", 300)}`);
+          }
           break;
         }
         case "goal/change": {

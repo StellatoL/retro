@@ -35,8 +35,8 @@ test("buildTranscript extracts user/assistant/tool/goal lines", () => {
   const events = [
     { type: "user/message", data: { message: { content: [{ type: "text", text: "帮我调 bug" }] } } },
     { type: "assistant/message", data: { message: { content: [{ type: "text", text: "已定位" }] } } },
-    { type: "tool/call", data: { name: "read", arguments: { file: "a.js" } } },
-    { type: "tool/result", data: { name: "read", ok: false, error: "ENOENT" } },
+    { type: "tool/call", data: { callId: "call_1", name: "read", arguments: { file: "a.js" } } },
+    { type: "tool/result", data: { message: { source: { callId: "call_1" }, content: [{ type: "tool-result", content: [{ type: "text", text: "Error: ENOENT" }], isError: true }] }, error: { name: "FsError", code: "ENOENT" } } },
     { type: "goal/change", data: { goal: { objective: "完成 X", phase: "complete" } } },
     { type: "feedback/record", data: { rating: 1 } }
   ];
@@ -44,7 +44,8 @@ test("buildTranscript extracts user/assistant/tool/goal lines", () => {
   assert.ok(t.includes("用户: 帮我调 bug"));
   assert.ok(t.includes("助手: 已定位"));
   assert.ok(t.includes("工具调用: read("));
-  assert.ok(t.includes("工具失败: read ENOENT"));
+  // 工具名经 callId 配对，错误码与文本都被提取（不再是 [object Object]）
+  assert.ok(t.includes("工具失败: read [ENOENT] Error: ENOENT"), t);
   assert.ok(t.includes("目标: 完成 X → complete"));
   assert.ok(t.includes("用户反馈:"));
 });
@@ -143,6 +144,28 @@ test("collector ignores goal-complete when disabled", () => {
   const { store, handlers } = collectorHarness({ autoProposeOnGoalComplete: false });
   handlers["session/event"](...ev("s1", "goal/change", { goal: { phase: "complete" } }));
   assert.equal(store.listProposals("pending").length, 0);
+});
+
+test("collector pairs tool errors with real names and codes (no [object Object])", () => {
+  const { store, handlers } = collectorHarness({ autoProposeOnGoalComplete: true });
+  // 配对：tool/call 记录 callId→name
+  handlers["session/event"](...ev("s1", "tool/call", { callId: "call_9", name: "edit" }));
+  // 真实形状：data.error 为对象、message 块 isError
+  handlers["session/event"](...ev("s1", "tool/result", {
+    message: { source: { callId: "call_9" }, content: [{ type: "tool-result", content: [{ type: "text", text: "Error: stale" }], isError: true }] },
+    error: { name: "FsError", code: "FS_STALE_VERSION" }
+  }));
+  const materials = store.listMaterials().filter((m) => m.kind === "tool-error");
+  assert.equal(materials.length, 1);
+  assert.ok(!materials[0].summary.includes("[object Object]"), materials[0].summary);
+  assert.ok(materials[0].summary.includes("edit"), materials[0].summary);
+  assert.ok(materials[0].summary.includes("FS_STALE_VERSION"), materials[0].summary);
+
+  // 成功结果不产生素材
+  handlers["session/event"](...ev("s1", "tool/result", {
+    message: { source: { callId: "call_9" }, content: [{ type: "tool-result", content: [{ type: "text", text: "ok" }], isError: false }] }
+  }));
+  assert.equal(store.listMaterials().filter((m) => m.kind === "tool-error").length, 1);
 });
 
 // ---- evolvor: dedupe ----
