@@ -33,7 +33,13 @@ window.__ModuleLoader__.load({
       ".dsh-retro-mono{color:var(--dsw-alias-label-tertiary,#8a8f98);font-size:11px;font-family:Consolas,monospace}",
       ".dsh-retro-empty{color:var(--dsw-alias-label-tertiary,#8a8f98);padding:6px 0}",
       ".dsh-retro-badge{display:inline-block;padding:0 7px;border-radius:999px;font-size:10px;border:1px solid var(--dsw-alias-border-l1,#ffffff22);color:var(--dsw-alias-label-secondary,#c9ced8)}",
-      ".dsh-retro-audit{font-size:11px;color:var(--dsw-alias-label-tertiary,#8a8f98)}"
+      ".dsh-retro-audit{font-size:11px;color:var(--dsw-alias-label-tertiary,#8a8f98)}",
+      ".dsh-retro-item.dsh-retro-clickable{cursor:pointer}",
+      ".dsh-retro-item.dsh-retro-clickable:hover{background:var(--dsw-alias-interactive-bg-hover-solid,rgba(255,255,255,.05))}",
+      ".dsh-retro-open{background:none;border:none;color:var(--dsw-alias-label-tertiary,#8a8f98);cursor:pointer;font-size:12px;padding:0 4px;margin-left:auto;flex:none}",
+      ".dsh-retro-open:hover{color:var(--dsw-alias-label-primary,#e6e8ee)}",
+      ".dsh-retro-toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:2147483002;background:var(--dsw-alias-bg-soft,#1a1f29);color:var(--dsw-alias-label-primary,#e6e8ee);border:1px solid var(--dsw-alias-border-l1,#ffffff22);border-radius:8px;padding:8px 14px;font-size:12px;box-shadow:0 4px 16px rgba(0,0,0,.4);opacity:0;transition:opacity .2s;pointer-events:none;font-family:var(--dsw-font-family,system-ui)}",
+      ".dsh-retro-toast.dsh-retro-toast-show{opacity:1}"
     ].join("");
 
     function apply(ctx) {
@@ -49,6 +55,7 @@ window.__ModuleLoader__.load({
       var open = false;
       var pollTimer = null;
       var REFRESH_MS = 30000;
+      var vaultName = "";
       var panel = document.createElement("div");
       panel.className = "dsh-retro-panel";
       document.body.appendChild(panel);
@@ -90,14 +97,18 @@ window.__ModuleLoader__.load({
       function render(d) {
         var s = d.stats || {};
         var q = d.queue || {};
+        vaultName = d.vaultName || "";
         var cards = (q.cards || []).map(function (c) {
-          return "<div class='dsh-retro-item'><span class='dsh-retro-mono'>" + esc(c.id) + "</span><span>" + esc(c.title) + "</span></div>";
+          return item(c.id, c.title, "/retro review " + c.id + " keep", c.note, vaultName);
         });
         var entries = (q.entries || []).map(function (e) {
-          return "<div class='dsh-retro-item'><span class='dsh-retro-mono'>" + esc(e.id) + "</span><span>" + esc(e.title) + "</span></div>";
+          return item(e.id, e.title, "/retro entry keep " + e.id, e.note, vaultName);
         });
         var proposals = (q.proposals || []).map(function (p) {
-          return "<div class='dsh-retro-item'><span class='dsh-retro-badge'>" + esc(p.kind) + "</span><span>" + esc(p.title) + "</span></div>";
+          return "<div class='dsh-retro-item dsh-retro-clickable' data-copy='/retro adopt " + esc(p.id) + "' title='点击复制采纳命令'><span class='dsh-retro-badge'>" + esc(p.kind) + "</span><span>" + esc(p.title) + "</span></div>";
+        });
+        var approved = (d.recentApproved || []).map(function (c) {
+          return "<div class='dsh-retro-item'><span class='dsh-retro-mono'>" + esc(c.id) + "</span><span>" + esc(c.title) + "</span>" + openBtn(c.note, vaultName) + "</div>";
         });
         var audit = (d.recentAudit || []).map(function (a) {
           return "<div class='dsh-retro-item dsh-retro-audit'><span>" + new Date(a.ts).toLocaleString("zh-CN") + "</span><span>" + esc(a.actor) + "</span><span>" + esc(a.action) + " " + esc(a.target) + "</span>" + (a.ok ? "" : " ❌") + "</div>";
@@ -115,16 +126,74 @@ window.__ModuleLoader__.load({
           "<h2>待审卡片</h2>", when(cards, "无"),
           "<h2>待确认条目</h2>", when(entries, "无"),
           "<h2>待采纳提案</h2>", when(proposals, "无"),
+          "<h2>最近落库</h2>", when(approved, "无"),
           "<h2>最近审计</h2>", when(audit, "无")
         ].join("");
+      }
+      // 可点击条目：整行复制命令 + 右侧「打开」按钮（Obsidian）
+      function item(id, title, copyCmd, note, vaultName) {
+        return "<div class='dsh-retro-item dsh-retro-clickable' data-copy='" + esc(copyCmd) + "' title='点击复制命令'>" +
+          "<span class='dsh-retro-mono'>" + esc(id) + "</span><span>" + esc(title) + "</span>" +
+          openBtn(note, vaultName) +
+          "</div>";
+      }
+      function openBtn(note, vaultName) {
+        if (!note || !vaultName) return "";
+        return "<button class='dsh-retro-open' data-open='" + esc(note) + "' title='在 Obsidian 中打开'>📂</button>";
       }
       function stat(value, label, hint) {
         return "<div class='dsh-retro-stat'><b>" + esc(value) + "</b><span>" + esc(label) + " · " + esc(hint) + "</span></div>";
       }
 
+      // 事件委托：点击复制命令 / 打开 Obsidian
+      var toast = document.createElement("div");
+      toast.className = "dsh-retro-toast";
+      document.body.appendChild(toast);
+      var toastTimer = null;
+      function showToast(text) {
+        toast.textContent = text;
+        toast.classList.add("dsh-retro-toast-show");
+        if (toastTimer !== null) clearTimeout(toastTimer);
+        toastTimer = setTimeout(function () {
+          toast.classList.remove("dsh-retro-toast-show");
+        }, 1800);
+      }
+      function copyText(text) {
+        var done = function () { showToast("已复制： " + text); };
+        var fail = function () { showToast("复制失败（浏览器限制）"); };
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(text).then(done, fail);
+        } else {
+          // 降级：临时 textarea
+          try {
+            var ta = document.createElement("textarea");
+            ta.value = text;
+            document.body.appendChild(ta);
+            ta.select();
+            document.execCommand("copy");
+            ta.remove();
+            done();
+          } catch (error) { fail(); }
+        }
+      }
+      function openObsidian(note, vaultName) {
+        var url = "obsidian://open?vault=" + encodeURIComponent(vaultName) + "&file=" + encodeURIComponent(note);
+        window.open(url, "_blank");
+        showToast("已在 Obsidian 中打开");
+      }
+      panel.addEventListener("click", function (event) {
+        var t = event.target;
+        var openTarget = t && typeof t.closest === "function" ? t.closest("[data-open]") : null;
+        if (openTarget) { openObsidian(openTarget.getAttribute("data-open"), vaultName); return; }
+        var copyTarget = t && typeof t.closest === "function" ? t.closest("[data-copy]") : null;
+        if (copyTarget) { copyText(copyTarget.getAttribute("data-copy")); return; }
+      });
+
       function cleanup() {
         if (pollTimer !== null) clearInterval(pollTimer);
+        if (toastTimer !== null) clearTimeout(toastTimer);
         panel.remove();
+        toast.remove();
       }
 
       // Native sidebar mount (sidebar.footer.action) with floating-button fallback.

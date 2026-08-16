@@ -26,8 +26,10 @@ function seeded() {
 
 test("renderPanelApi produces the panel snapshot", () => {
   const { dir, store } = seeded();
-  const api = renderPanelApi(store);
+  const cfg = { vaultPath: "C:/vaults/Obsidian_Stw", stagingDir: "Index/06_Retro/_retro", entriesDir: "Index/06_Retro/_entries" };
+  const api = renderPanelApi(store, cfg);
   assert.ok(api.generatedAt);
+  assert.equal(api.vaultName, "Obsidian_Stw"); // obsidian:// URI 用
   assert.equal(api.stats.cards, 2);
   assert.equal(api.stats.draftedCards, 1);
   assert.equal(api.stats.entries, 2);
@@ -38,12 +40,15 @@ test("renderPanelApi produces the panel snapshot", () => {
   assert.equal(api.stats.publishedPosts, 1);
   assert.equal(api.stats.materials, 1);
   assert.equal(api.stats.weeklyCount, 1);
-  // queue
+  // queue（note = vault 相对路径，供 Obsidian 打开）
   assert.equal(api.queue.cards.length, 1);
-  assert.equal(api.queue.cards[0].id, api.queue.cards[0].id);
+  assert.equal(api.queue.cards[0].note, "Index/06_Retro/_retro/x.md");
   assert.equal(api.queue.entries.length, 1);
   assert.equal(api.queue.proposals.length, 1);
   assert.equal(api.queue.proposals[0].kind, "skill");
+  // 最近落库（可打开）
+  assert.equal(api.recentApproved.length, 1);
+  assert.equal(api.recentApproved[0].note, "y.md");
   // audit
   assert.ok(api.recentAudit.length >= 1);
   rmSync(dir, { recursive: true, force: true });

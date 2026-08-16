@@ -41,7 +41,7 @@ function apply(ctx, config) {
 
     // Web panel API (GET /retro/api) — optional webServer service.
     try {
-      registerPanelApi(ctx, store);
+      registerPanelApi(ctx, store, cfg);
     } catch (error) {
       ctx.logger?.warn?.(`[retro] 面板 API 注册失败：${String(error?.message ?? error)}`);
     }

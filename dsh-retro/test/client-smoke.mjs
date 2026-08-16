@@ -26,18 +26,52 @@ function makeElement(tag) {
 const created = [];
 globalThis.document = {
   getElementById() { return null; },
-  createElement(tag) { const el = makeElement(tag); created.push(el); return el; },
+  createElement(tag) {
+    const el = makeElement(tag);
+    el.dataset = {};
+    el.getAttribute = (k) => el.dataset[k] ?? null;
+    el.classList = { add() {}, remove() {} };
+    el.select = () => {};
+    el.focus = () => {};
+    created.push(el);
+    return el;
+  },
   head: makeElement("head"),
-  body: makeElement("body")
+  body: makeElement("body"),
+  execCommand() { return true; }
 };
-globalThis.fetch = async () => ({ ok: true, json: async () => ({ stats: { cards: 3, draftedCards: 1 }, queue: { cards: [], entries: [], proposals: [] }, recentAudit: [] }) });
+let fetchCalls = 0;
+globalThis.fetch = async () => {
+  fetchCalls++;
+  return {
+    ok: true,
+    json: async () => ({
+      vaultName: "Obsidian_Stw",
+      stats: { cards: 3, draftedCards: 1 },
+      queue: {
+        cards: [{ id: "rc-1", title: "草稿卡", note: "Index/06_Retro/_retro/rc-1.md" }],
+        entries: [],
+        proposals: []
+      },
+      recentApproved: [],
+      recentAudit: []
+    })
+  };
+};
+let copiedText = null;
+let openedUrl = null;
+Object.defineProperty(globalThis, "navigator", {
+  value: { clipboard: { writeText: async (t) => { copiedText = t; } } },
+  configurable: true
+});
 
 // capture the module definition
 let capturedDef = null;
 globalThis.window = {
   __ModuleLoader__: {
     load(def) { capturedDef = def; }
-  }
+  },
+  open(url) { openedUrl = url; return null; }
 };
 await import(pathToFileURL(path.join(process.cwd(), "lib", "client.js")).href);
 if (!capturedDef) throw new Error("client bundle did not call __ModuleLoader__.load");
@@ -107,6 +141,55 @@ function check(cond, msg) {
     fab.listeners.click[0]();
     check(created.some((e) => e.className === "dsh-retro-panel" && e.style.display === "block"), "浮动按钮打开面板");
   }
+}
+
+// ---- path 3: panel interactions (copy command / open in Obsidian) ----
+{
+  created.length = 0;
+  copiedText = null;
+  openedUrl = null;
+  fetchCalls = 0;
+  const slotsMock = {
+    inject(hole, cb) { this._cb = cb; },
+    register(spec, comp) { this._registered = { spec, comp }; return () => {}; }
+  };
+  const ctx = {
+    get(name) { return name === "slots" ? slotsMock : undefined; },
+    effect(cb) { this._disposer = cb(); }
+  };
+  factoryExports.apply(ctx);
+  // 通过侧边栏按钮打开面板（toggle → refresh）
+  slotsMock._cb();
+  const btnEl = slotsMock._registered.comp({ wide: false });
+  btnEl.props.onClick();
+  const panelEl = created.find((e) => e.className === "dsh-retro-panel");
+  await new Promise((r) => setTimeout(r, 10)); // let fetch .then run
+  check(fetchCalls >= 1, "面板打开时请求 /retro/api");
+  check(panelEl.innerHTML.includes("data-copy='/retro review rc-1 keep'"), "卡片行携带复制命令");
+  check(panelEl.innerHTML.includes("data-open='Index/06_Retro/_retro/rc-1.md'"), "卡片行携带 Obsidian 打开路径");
+
+  // 点击「打开」→ obsidian:// URI
+  const clickHandler = panelEl.listeners.click[0];
+  clickHandler({ target: {
+    closest: (sel) => sel === "[data-open]" ? { getAttribute: () => "Index/06_Retro/_retro/rc-1.md" } : null
+  } });
+  check(!!openedUrl && openedUrl.startsWith("obsidian://open?vault=Obsidian_Stw&file="), "点击打开生成 obsidian:// URI");
+  check(openedUrl.includes(encodeURIComponent("Index/06_Retro/_retro/rc-1.md")), "URI 包含编码后的文件路径");
+
+  // 点击条目 → 复制命令
+  clickHandler({ target: {
+    closest: (sel) => (sel === "[data-open]" ? null : sel === "[data-copy]" ? { getAttribute: () => "/retro review rc-1 keep" } : null)
+  } });
+  await new Promise((r) => setTimeout(r, 10));
+  check(copiedText === "/retro review rc-1 keep", "点击条目复制命令到剪贴板");
+
+  // 提案行复制
+  const clickProposal = { target: { closest: (sel) => (sel === "[data-open]" ? null : sel === "[data-copy]" ? { getAttribute: () => "/retro adopt prop-9" } : null) } };
+  clickHandler(clickProposal);
+  await new Promise((r) => setTimeout(r, 10));
+  check(copiedText === "/retro adopt prop-9", "提案行复制采纳命令");
+
+  if (typeof ctx._disposer === "function") ctx._disposer();
 }
 
 if (failures > 0) { console.error(failures + " failures"); process.exit(1); }
