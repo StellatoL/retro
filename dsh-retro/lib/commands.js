@@ -345,9 +345,28 @@ async function runAdopt(ctx, store, cfg, rest) {
 // ---------------------------------------------------------------------------
 // /weekly
 // ---------------------------------------------------------------------------
+
+/**
+ * 同一天已存在且未处理的 weekly 卡片（防重复周报）。
+ * 纯函数（可测试）：dateStr 为 YYYY-MM-DD。
+ */
+export function findTodayWeeklyCard(store, dateStr) {
+  return store
+    .listCards()
+    .find((c) => c.source === "weekly" && c.status === "drafted" && String(c.title ?? "").includes(dateStr));
+}
+
 async function runWeekly(ctx, store, cfg, invocation) {
   try {
     const opts = flags(parseArgs(invocation.rawInput));
+    // 防重复：今天已有未处理的周报时提示，--force 强制重新生成
+    const existingWeekly = findTodayWeeklyCard(store, todayStamp());
+    if (existingWeekly && opts.force !== true) {
+      return ok(
+        `今天已生成周报：${existingWeekly.id}「${existingWeekly.title}」\n` +
+        `先处理它（/retro review ${existingWeekly.id} keep|discard），或强制重新生成：/weekly --force`
+      );
+    }
     const meta = store.getMeta();
     const since = meta.lastWeeklyCheck ? new Date(meta.lastWeeklyCheck).getTime() : Date.now() - 7 * 86400000;
     const sinceIso = new Date(since).toISOString();

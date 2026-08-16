@@ -10,7 +10,7 @@ import { attachCollector } from "../lib/collectors.js";
 import { RetroStore } from "../lib/store.js";
 import { dedupeSuggestions, proposeUpdate, adoptProposal, updateMoc, MOC_FILENAME } from "../lib/evolvor.js";
 import { ensureDirs, settleEntry, draftEntryFile } from "../lib/settler.js";
-import { parseArgs, flags } from "../lib/commands.js";
+import { parseArgs, flags, findTodayWeeklyCard } from "../lib/commands.js";
 
 function tmpEnv() {
   const dir = mkdtempSync(path.join(os.tmpdir(), "retro-pipe-"));
@@ -245,4 +245,20 @@ test("parseArgs handles quotes; flags extracts options", () => {
   assert.equal(f.push, true);
   const f2 = flags(["--blog-auto-push=true"]);
   assert.equal(f2.blogAutoPush, "true");
+});
+
+test("findTodayWeeklyCard blocks duplicate same-day weekly cards", () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "retro-wk-"));
+  const store = new RetroStore(dir);
+  assert.equal(findTodayWeeklyCard(store, "2026-08-16"), undefined);
+  store.addCard({ sessionIds: [], title: "本周复盘汇总 2026-08-16", source: "weekly", status: "drafted" });
+  assert.ok(findTodayWeeklyCard(store, "2026-08-16"));
+  // 已处理的周报不再阻挡
+  const card = store.listCards()[0];
+  store.updateCard(card.id, { status: "approved" });
+  assert.equal(findTodayWeeklyCard(store, "2026-08-16"), undefined);
+  // 其他来源的卡片不阻挡
+  store.addCard({ sessionIds: [], title: "本周复盘汇总 2026-08-16", source: "command", status: "drafted" });
+  assert.equal(findTodayWeeklyCard(store, "2026-08-16"), undefined);
+  rmSync(dir, { recursive: true, force: true });
 });
