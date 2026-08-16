@@ -11,13 +11,14 @@ export const DEFAULTS = {
   vaultPath: "",
   blogPath: "",
   blogBaseUrl: "",
-  // 复盘系统统一放在 Index/06_Retro/ 下（用户确认的布局）：
+  // 复盘系统统一放在 Index/06_Retro/ 下（用户确认的布局）；
+  // 落库目录也必须在 Index 下，默认 03_Full_Notes/04_Retro（03 内的复盘子文件夹）。
   stagingDir: "Index/06_Retro/_retro",       // 复盘卡片暂存区（人工审阅）
   experienceRoot: "Index/06_Retro/经验库",    // 永久经验库
   proposalsDir: "Index/06_Retro/_proposals",  // 进化提案（skill/AGENTS.md 待采纳）
   entriesDir: "Index/06_Retro/_entries",      // 经验条目草稿
-  settleDirs: ["03_Full_Notes", "04_Projects", "Index/06_Retro/经验库"],
-  readWhitelist: ["00_Inbox", "03_Full_Notes", "04_Projects", "05_Weekly_review", "06_Retro"],
+  settleDirs: ["Index/03_Full_Notes/04_Retro", "Index/04_Projects", "Index/06_Retro/经验库"],
+  readWhitelist: ["Index"],
   templates: {
     experience: "Index/99_system/_templates/experience.md",
     permanent: "Index/99_system/_templates/permanent.md",

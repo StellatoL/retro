@@ -23,7 +23,7 @@ function tmpEnv() {
     experienceRoot: "Index/06_Retro/经验库",
     proposalsDir: "Index/06_Retro/_proposals",
     entriesDir: "Index/06_Retro/_entries",
-    settleDirs: ["03_Full_Notes", "Index/06_Retro/经验库"],
+    settleDirs: ["Index/03_Full_Notes/04_Retro", "Index/06_Retro/经验库"],
     readWhitelist: ["Index"],
     autoProposeOnGoalComplete: true
   };

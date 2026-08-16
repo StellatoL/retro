@@ -31,8 +31,8 @@ function testCfg(vault) {
     experienceRoot: "Index/06_Retro/经验库",
     proposalsDir: "Index/06_Retro/_proposals",
     entriesDir: "Index/06_Retro/_entries",
-    settleDirs: ["03_Full_Notes", "04_Projects", "Index/06_Retro/经验库"],
-    readWhitelist: ["00_Inbox", "03_Full_Notes", "04_Projects", "05_Weekly_review", "06_Retro"],
+    settleDirs: ["Index/03_Full_Notes/04_Retro", "Index/04_Projects", "Index/06_Retro/经验库"],
+    readWhitelist: ["Index"],
     templates: {},
     autoProposeOnGoalComplete: true,
     weeklyReminderDays: 7,
@@ -147,9 +147,9 @@ test("draft card file + settle keep + discard", () => {
   const { title, body } = splitCardFile(staged);
   assert.equal(title, null); // no # heading in this draft body
 
-  const settled = settleCard(cfg, store, card, { action: "keep", dir: "03_Full_Notes" });
+  const settled = settleCard(cfg, store, card, { action: "keep", dir: "Index/03_Full_Notes/04_Retro" });
   assert.equal(settled.status, "approved");
-  assert.ok(card.vaultNote.startsWith("03_Full_Notes/"));
+  assert.ok(card.vaultNote.startsWith("Index/03_Full_Notes/04_Retro/"));
   assert.ok(readFileSync(path.join(vault, card.vaultNote), "utf8").includes("用 X 代替 Y"));
 
   const card2 = store.addCard({ sessionIds: ["s2"], title: "丢弃", source: "test" });

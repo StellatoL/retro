@@ -22,7 +22,7 @@ function tmpEnv() {
     experienceRoot: "Index/06_Retro/经验库",
     proposalsDir: "Index/06_Retro/_proposals",
     entriesDir: "Index/06_Retro/_entries",
-    readWhitelist: ["03_Full_Notes", "Index"],
+    readWhitelist: ["Index"],
     blogAutoPush: false
   };
   return { dir, vault, blog, cfg };
@@ -131,10 +131,10 @@ test("publishBlogPost refuses non-draft posts", async () => {
 test("draftBlogFromNote reads a whitelisted vault note", () => {
   const { dir, vault, cfg } = tmpEnv();
   const store = new RetroStore(path.join(dir, "state"));
-  const noteDir = path.join(vault, "03_Full_Notes");
+  const noteDir = path.join(vault, "Index", "03_Full_Notes", "04_Retro");
   mkdirSync(noteDir, { recursive: true });
   writeFileSync(path.join(noteDir, "笔记.md"), "---\ntitle: 笔记标题\n---\n正文内容");
-  const result = draftBlogFromNote(cfg, store, { notePath: "03_Full_Notes/笔记.md" });
+  const result = draftBlogFromNote(cfg, store, { notePath: "Index/03_Full_Notes/04_Retro/笔记.md" });
   assert.equal(result.ok, true);
   assert.equal(result.title, "笔记标题");
   assert.ok(result.path.startsWith("src/content/posts/"));

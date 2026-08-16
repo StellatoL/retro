@@ -463,7 +463,7 @@ async function runBlog(ctx, store, cfg, invocation) {
         const approved = store.listCards("approved").filter((c) => c.vaultNote).slice(-5);
         const lines = [
           "用法：/blog draft <notePath|cardId> [--tags a,b] [--category x]",
-          "（notePath 为 vault 内相对路径，如 03_Full_Notes/xxx.md；路径含空格/特殊字符时用引号包裹）",
+          "（notePath 为 vault 内相对路径，如 Index/03_Full_Notes/04_Retro/xxx.md；路径含空格/特殊字符时用引号包裹）",
           ""
         ];
         if (approved.length > 0) {

@@ -133,7 +133,7 @@ export function draftCardFiles(cfg, store, card, { markdown, questions = [], tem
 
 /** Valid final directories for settled notes (relative to vault). */
 function resolveSettleDir(cfg, dir) {
-  const allowed = cfg.settleDirs ?? ["03_Full_Notes", "04_Projects"];
+  const allowed = cfg.settleDirs ?? ["Index/03_Full_Notes/04_Retro", "Index/04_Projects"];
   const candidate = dir ?? allowed[0];
   if (!allowed.includes(candidate)) {
     throw new Error(`目标目录 "${candidate}" 不在允许列表 ${allowed.join(" / ")} 中（--dir 只能选这些）`);

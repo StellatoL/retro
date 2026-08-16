@@ -44,13 +44,15 @@ New-Item -ItemType Junction -Path "$env:USERPROFILE\.dsh\profiles\web\node_modul
 
 ## 命令
 
+> **目录约定**：所有产物都在 vault 的 `Index/` 下——复盘系统在 `Index/06_Retro/`（暂存/经验库/提案/条目），落库默认进 `Index/03_Full_Notes/04_Retro/`（03 内的复盘子文件夹，可在 `settleDirs` 配置）。
+>
 > **命名约定**：所有生成的草稿/落库/条目/提案文件统一命名为 `日期-时间-简要主题.md`（如 `2026-08-16-2215-dsh-插件复盘.md`），同名冲突自动追加 `-2`、`-3`。
 
 | 命令 | 作用 |
 |---|---|
 | `/retro queue` | 队列总览（待复盘/草稿/条目/提案/发布） |
 | `/retro draft today\|week\|all\|workspace\|session:<id>` | 生成复盘草稿到暂存区 |
-| `/retro review <id> keep [--dir 03_Full_Notes]` | 确认落库（默认 03_Full_Notes） |
+| `/retro review <id> keep [--dir Index/03_Full_Notes/04_Retro]` | 确认落库（默认 03 的 04_Retro 子文件夹） |
 | `/retro review <id> discard` | 丢弃 |
 | `/retro review <id> edit <意见>` | 打回修订 |
 | `/retro entry keep <id>` | 经验条目沉淀为永久笔记 |
