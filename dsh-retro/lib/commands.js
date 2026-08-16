@@ -375,12 +375,22 @@ async function runWeekly(ctx, store, cfg, invocation) {
       }
     }
 
+    // 会话为空时的素材兜底：本周素材同样构成周报输入
+    const materials = store.listMaterials({ since });
+    if (summaries.length === 0 && materials.length > 0) {
+      for (const m of materials.slice(0, 8)) {
+        summaries.push({ sessionId: m.sessionId ?? "material", title: `素材：${m.kind}`, summary: m.summary });
+      }
+    }
+
     const pending = {
       cards: store.listCards("drafted").map((c) => ({ id: c.id, title: c.title })),
       entries: store.listEntries().filter((e) => e.status === "drafted").map((e) => ({ id: e.id, title: e.title })),
       proposals: store.listProposals("pending").filter((p) => p.kind !== "retro-suggest").map((p) => ({ id: p.id, kind: p.kind, title: p.title })),
       publish: store.listPublish("drafted").map((p) => ({ slug: p.slug, title: p.title })),
-      materials: store.listMaterials({ since }).length
+      materials: materials.length,
+      // 反馈回灌：本周用户反馈素材进入周报输入
+      feedback: materials.filter((m) => m.kind === "feedback").map((m) => m.summary).slice(-10)
     };
 
     const markdown = await distillWeekly(ctx, cfg, summaries, pending, { signal });
