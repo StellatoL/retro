@@ -6,7 +6,7 @@ import { validateConfig, renderConfig, saveConfig as persistConfig, configPath, 
 import { distillSession, distillWeekly } from "./distiller.js";
 import { draftCardFiles, settleCard, draftEntryFile, settleEntry, ensureDirs, readStaging, splitCardFile, stripQuestionsSection, extractEntryFromCard, stagingRoot } from "./settler.js";
 import { draftBlogFromNote, publishBlogPost, captureBlogPosts, listBlogPosts } from "./publisher.js";
-import { proposeUpdate, adoptProposal, dedupeSuggestions, dedupeBlogPosts, updateMoc } from "./evolvor.js";
+import { proposeUpdate, adoptProposal, dedupeSuggestions, dedupeProposals, dedupeBlogPosts, updateMoc } from "./evolvor.js";
 import { renderReport } from "./report.js";
 import { atomicWrite, clip, todayStamp, nowStamp, safeJoin } from "./util.js";
 
@@ -360,7 +360,7 @@ function runConfig(store, cfg, rest) {
   return ok(`已更新 ${key} = ${typeof value === "object" ? JSON.stringify(value) : String(value)}\n（下次命令生效；路径配置可用 /retro config vaultPath 调整）\n${validateConfig(next).join("\n")}`);
 }
 
-async function runAdopt(ctx, store, cfg, rest) {
+export async function runAdopt(ctx, store, cfg, rest) {
   const [target] = rest;
   if (!target) return err("用法：/retro adopt <proposalId|all>（用 /retro queue 查看待采纳提案）");
   const hasAll = target === "all";

@@ -9,8 +9,8 @@ import { buildTranscript, extractEvolutionSuggestions, cleanTitle } from "../lib
 import { attachCollector } from "../lib/collectors.js";
 import { RetroStore } from "../lib/store.js";
 import { dedupeSuggestions, dedupeProposals, proposeUpdate, adoptProposal, updateMoc, MOC_FILENAME } from "../lib/evolvor.js";
-import { ensureDirs, settleEntry, draftEntryFile } from "../lib/settler.js";
-import { parseArgs, flags, findTodayWeeklyCard } from "../lib/commands.js";
+import { ensureDirs, settleEntry, draftEntryFile, writeStaging } from "../lib/settler.js";
+import { parseArgs, flags, findTodayWeeklyCard, runAdopt } from "../lib/commands.js";
 
 function tmpEnv() {
   const dir = mkdtempSync(path.join(os.tmpdir(), "retro-pipe-"));
@@ -287,5 +287,38 @@ test("findTodayWeeklyCard blocks duplicate same-day weekly cards", () => {
   // 其他来源的卡片不阻挡
   store.addCard({ sessionIds: [], title: "本周复盘汇总 2026-08-16", source: "command", status: "drafted" });
   assert.equal(findTodayWeeklyCard(store, "2026-08-16"), undefined);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("runAdopt all adopts each group's representative and skips duplicates", async () => {
+  const { dir, vault, cfg } = tmpEnv();
+  const store = new RetroStore(path.join(dir, "state"));
+  ensureDirs(cfg);
+  const oldHome = process.env.DSH_HOME;
+  process.env.DSH_HOME = path.join(dir, "dsh-home");
+  mkdirSync(path.join(dir, "dsh-home", "skills", "retro-writing"), { recursive: true });
+
+  store.addProposal({ id: "p1", kind: "skill", title: "空会话周报处理规则", reason: "无数据时避免编造", status: "pending" });
+  store.addProposal({ id: "p2", kind: "skill", title: "低会话周报处理规则", reason: "会话少时周报要点", status: "pending" });
+  store.addProposal({ id: "p3", kind: "skill", title: "沙箱拒绝处理流程", reason: "沙箱拒绝时行动一致", status: "pending" });
+  // adoptProposal 需要每个提案有真实的暂存文件（relPath）——为 p1/p2/p3 补写
+  for (const p of [store.getProposal("p1"), store.getProposal("p2"), store.getProposal("p3")]) {
+    const relPath = `_proposals/${p.id}.md`;
+    writeStaging(cfg, relPath, `---\nType: dsh_retro_proposal\nkind: ${p.kind}\n---\n\n# ${p.title}\n\n\`\`\`markdown\n## ${p.title}\n- 规则\n\`\`\``, { store });
+    store.updateProposal(p.id, { relPath });
+  }
+
+  const out = await runAdopt({}, store, cfg, ["all"]);
+  assert.equal(out.kind, "success");
+  assert.ok(out.text.includes("已跳过"), "输出包含去重跳过说明");
+
+  // 一组重复（p1/p2）留 p1 作代表 + p3 → p1/p3 adopted，p2 skipped
+  // （listProposals() 默认只筛 pending，故用 getProposal 逐条断言）
+  assert.equal(store.getProposal("p1").status, "adopted");
+  assert.equal(store.getProposal("p3").status, "adopted");
+  assert.equal(store.getProposal("p2").status, "skipped");
+  assert.ok(store.getProposal("p2").skipNote && store.getProposal("p2").skipNote.includes("重复"));
+
+  process.env.DSH_HOME = oldHome;
   rmSync(dir, { recursive: true, force: true });
 });
