@@ -8,7 +8,7 @@ import os from "node:os";
 import { buildTranscript, extractEvolutionSuggestions, cleanTitle } from "../lib/distiller.js";
 import { attachCollector } from "../lib/collectors.js";
 import { RetroStore } from "../lib/store.js";
-import { dedupeSuggestions, proposeUpdate, adoptProposal, updateMoc, MOC_FILENAME } from "../lib/evolvor.js";
+import { dedupeSuggestions, dedupeProposals, proposeUpdate, adoptProposal, updateMoc, MOC_FILENAME } from "../lib/evolvor.js";
 import { ensureDirs, settleEntry, draftEntryFile } from "../lib/settler.js";
 import { parseArgs, flags, findTodayWeeklyCard } from "../lib/commands.js";
 
@@ -234,6 +234,33 @@ test("updateMoc builds and refreshes the experience index", () => {
   assert.ok(text2.includes("第二条经验"));
   assert.ok(text2.includes("entryCount: 2"));
   rmSync(dir, { recursive: true, force: true });
+});
+
+// ---- evolvor: proposal dedupe (B1) ----
+test("dedupeProposals groups semantically-similar pending proposals", () => {
+  const proposals = [
+    { id: "a", kind: "skill", title: "空会话周报处理规则", reason: "无数据时避免编造", status: "pending" },
+    { id: "b", kind: "skill", title: "低会话周报处理规则", reason: "会话少时周报要点", status: "pending" },
+    { id: "c", kind: "skill", title: "沙箱拒绝处理流程", reason: "沙箱被拒时行动一致", status: "pending" },
+    { id: "d", kind: "agents", title: "exp条目必须关联会话摘要", reason: "经验可追溯", status: "pending" }
+  ];
+  const groups = dedupeProposals(proposals);
+  // a 与 b 相似（同组），c、d 各自独立
+  assert.equal(groups.length, 3);
+  const abGroup = groups.find((g) => g.representative.id === "a" || g.representative.id === "b");
+  assert.ok(abGroup.duplicates.length === 1, "a/b 互为重复且去重后剩代表");
+  // 每组代表 + duplicates 的 id 不相交
+  const ids = new Set(groups.flatMap((g) => [g.representative.id, ...g.duplicates.map((d) => d.id)]));
+  assert.equal(ids.size, 4);
+});
+
+test("dedupeProposals ignores non-pending and retro-suggest", () => {
+  const proposals = [
+    { id: "a", kind: "skill", title: "规则 X", reason: "", status: "adopted" },
+    { id: "b", kind: "retro-suggest", title: "建议", reason: "", status: "pending" }
+  ];
+  const groups = dedupeProposals(proposals);
+  assert.equal(groups.length, 0);
 });
 
 // ---- commands pure helpers ----

@@ -149,6 +149,51 @@ export function dedupeBlogPosts(cfg, title) {
   return hits.slice(0, 5);
 }
 
+// ---- proposal dedupe (B1) ----
+
+/** bigram feature set of a text (CJK-aware, ignores punctuation/whitespace). */
+function bigrams(text) {
+  const s = String(text ?? "").replace(/[\s，。、,.\-—:：()（）\[\]「」【】]/g, "");
+  const set = new Set();
+  for (let i = 0; i + 1 < s.length; i++) set.add(s.slice(i, i + 2));
+  return set;
+}
+
+/** Jaccard similarity between two proposals (title + reason features). */
+function proposalSimilarity(a, b) {
+  const fa = bigrams((a.title ?? "") + (a.reason ?? ""));
+  const fb = bigrams((b.title ?? "") + (b.reason ?? ""));
+  if (fa.size === 0 || fb.size === 0) return 0;
+  let inter = 0;
+  for (const x of fa) if (fb.has(x)) inter++;
+  return inter / (fa.size + fb.size - inter);
+}
+
+/**
+ * Group semantically-duplicate pending proposals (skill/agents) by bigram Jaccard.
+ * Pure function (testable): returns groups `[{ representatives(items), duplicates:[...] }]`.
+ * Threshold is a Jaccard similarity between 0 and 1.
+ */
+export function dedupeProposals(proposals, threshold = 0.3) {
+  const list = (proposals ?? []).filter((p) => p && p.status === "pending" && p.kind !== "retro-suggest");
+  const groups = [];
+  const assigned = new Set();
+  for (let i = 0; i < list.length; i++) {
+    if (assigned.has(list[i].id)) continue;
+    const group = { representative: list[i], duplicates: [] };
+    assigned.add(list[i].id);
+    for (let j = 0; j < list.length; j++) {
+      if (j === i || assigned.has(list[j].id)) continue;
+      if (proposalSimilarity(list[i], list[j]) >= threshold) {
+        group.duplicates.push(list[j]);
+        assigned.add(list[j].id);
+      }
+    }
+    groups.push(group);
+  }
+  return groups;
+}
+
 /**
  * Maintain the experience-library MOC index (Index/06_Retro/经验库/00_索引.md):
  * scans every entry note in the root (excluding the index itself) and rewrites

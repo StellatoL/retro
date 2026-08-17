@@ -21,13 +21,13 @@ DSH 经验复盘管线：**采集 → 提炼 → 沉淀 → 进化 → 发布**�
 
 ## 安装
 
-按官方文档（develop/basic「第一个插件」）的模式：本地插件在 profile 的 `cordis.patch.yml` 中以**相对 profile 目录的路径**注册（patch 文件只贡献配置，不改变 loader 的模块解析根）：
+本地插件在 profile 的 `cordis.patch.yml` 中用**裸包名**注册（client-modules 需要按包名扫描 `dsh.client` 声明）：
 
 ```yaml
 # ~/.dsh/profiles/web/cordis.patch.yml
 - insert:
     - id: retro
-      name: './node_modules/dsh-retro/lib/index.js'
+      name: 'dsh-retro'
       config: {}
 ```
 
@@ -35,12 +35,12 @@ DSH 经验复盘管线：**采集 → 提炼 → 沉淀 → 进化 → 发布**�
 # 1. 把包放进 profile 的 node_modules（junction 指向本仓库，改代码即时生效）
 New-Item -ItemType Junction -Path "$env:USERPROFILE\.dsh\profiles\web\node_modules\dsh-retro" -Target "<本仓库绝对路径>" -Force
 
-# 2. 重启 dsh web（或由 cordis HMR 热加载 patch 变更后直接生效）
+# 2. 重启 dsh web（或由 cordis HMR 热加载 patch 变更后直接生效）；浏览器刷新加载 Web 面板
 ```
 
-> Windows 注意：官方文档示例用绝对路径 `name: '/abs/path/plugin.ts'`，但 Windows 上绝对路径会触发 internal loader 的 `file://` 怪癖（`protocol 'c:'`）；相对路径（相对 profile 目录）在 Windows 上可靠。
+> 依赖：profile 的 node_modules 需能解析 `dsh-retro`（junction 或 npm 安装）；若 npx 缓存被清导致裸名解析失败，重建 junction 即可。
 >
-> 若将来发布到 npm，可把包安装进 dsh 安装目录后改用裸包名 `name: dsh-retro`（包内 `cordis.patch.yml` 已带包名行，作为 bundle 使用）。
+> 若将来发布到 npm，以包名 `dsh-retro` 安装进 profile 后同样适用（bundles 模式也支持）。
 
 ## 命令
 
@@ -57,7 +57,8 @@ New-Item -ItemType Junction -Path "$env:USERPROFILE\.dsh\profiles\web\node_modul
 | `/retro review <id> edit <意见>` | 打回修订 |
 | `/retro entry keep <id>` | 经验条目沉淀为永久笔记 |
 | `/retro config [k v]` | 查看/修改配置（`~/.dsh/retro/config.json`） |
-| `/retro adopt <id\|all>` | 采纳进化提案（skill/AGENTS.md，自动 .bak） |
+| `/retro adopt <id\|all>` | 采纳进化提案（skill/AGENTS.md，自动 .bak；`all` 时自动去重，重复提案标记 skipped） |
+| `/retro cleanup` | 删除所有已丢弃（discarded）卡片的暂存文件 |
 | `/retro report` | 生成 HTML 复盘面板（自包含，自动用浏览器打开） |
 | `/weekly [--force]` | 本周复盘汇总（自动提炼进化提案 + 刷新经验库索引） |
 | `/blog list` | 文章列表 |
@@ -80,9 +81,9 @@ New-Item -ItemType Junction -Path "$env:USERPROFILE\.dsh\profiles\web\node_modul
 
 原生客户端插件（`dsh.client` 声明 + 运行时 bundle，**前端零重建**）：
 
-- 浏览器刷新 DSH Web 页面后，右下角出现 **「复盘」浮动按钮**；
+- 浏览器刷新 DSH Web 页面后，**侧边栏底部出现「复盘」按钮**（浮动按钮为 slots 不可用时的降级路径）；
 - 打开面板显示：总览统计（卡片/条目/提案/发布/素材/周报）、待审队列（草稿卡片/条目/提案）、最近审计；
-- 数据来自宿主 `GET /retro/api`（同源实时快照，只读；交互确认仍走 `/retro review` 等命令）；
+- 数据来自宿主 `GET /retro/api`（同源实时快照，只读；交互：点击条目复制命令、📂 一键在 Obsidian 打开；确认动作仍走 `/retro review` 等命令）；
 - 机制：`dsh-client-modules` 扫描包声明 → `GET /plugins/dsh-retro/client.js` 运行时 serve bundle → shell `__ModuleLoader__` 执行（详见 `docs/M6-web-panel.md`）。
 
 ## 数据与安全
@@ -90,4 +91,4 @@ New-Item -ItemType Junction -Path "$env:USERPROFILE\.dsh\profiles\web\node_modul
 - 状态与审计：`~/.dsh/retro/store.json`（所有写入留痕）
 - 自动写入仅限暂存区白名单；正式落库/发布只发生在人工命令路径
 - vault 与 blog 均为 git 仓库，可随时回滚
-- 只读白名单默认：`00_Inbox / 03_Full_Notes / 04_Projects / 05_Weekly_review / 06_Retro`
+- 只读白名单默认仅 `Index`（整个 Index 体系可读，其余路径拒绝）。

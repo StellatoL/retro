@@ -1,13 +1,14 @@
-// dsh-retro: human-facing slash commands — /retro, /weekly, /blog, /retro config|review|entry|adopt|queue|report.
+// dsh-retro: human-facing slash commands — /retro, /weekly, /blog, /retro config|review|entry|adopt|queue|report|cleanup.
 import path from "node:path";
 import { spawn } from "node:child_process";
+import { rmSync } from "node:fs";
 import { validateConfig, renderConfig, saveConfig as persistConfig, configPath, retroDir } from "./config.js";
 import { distillSession, distillWeekly } from "./distiller.js";
-import { draftCardFiles, settleCard, draftEntryFile, settleEntry, ensureDirs, readStaging, splitCardFile, stripQuestionsSection, extractEntryFromCard } from "./settler.js";
+import { draftCardFiles, settleCard, draftEntryFile, settleEntry, ensureDirs, readStaging, splitCardFile, stripQuestionsSection, extractEntryFromCard, stagingRoot } from "./settler.js";
 import { draftBlogFromNote, publishBlogPost, captureBlogPosts, listBlogPosts } from "./publisher.js";
 import { proposeUpdate, adoptProposal, dedupeSuggestions, dedupeBlogPosts, updateMoc } from "./evolvor.js";
 import { renderReport } from "./report.js";
-import { atomicWrite, clip, todayStamp, nowStamp } from "./util.js";
+import { atomicWrite, clip, todayStamp, nowStamp, safeJoin } from "./util.js";
 
 /** Register all retro commands. */
 export function registerCommands(ctx, store, cfg) {
@@ -78,7 +79,8 @@ async function runRetro(ctx, store, cfg, invocation) {
     if (sub === "config") return runConfig(store, cfg, rest);
     if (sub === "adopt") return runAdopt(ctx, store, cfg, rest);
     if (sub === "report") return runReport(store, cfg, rest);
-    return err(`未知子命令 "${sub}"。用法：${invocation.rawInput.length ? "/retro queue" : "/retro [queue|draft|review|entry|config|adopt|report]"}`);
+    if (sub === "cleanup") return runCleanup(store, cfg, rest);
+    return err(`未知子命令 "${sub}"。用法：${invocation.rawInput.length ? "/retro queue" : "/retro [queue|draft|review|entry|config|adopt|report|cleanup]"}`);
   } catch (error) {
     return err(`/retro 失败：${String(error?.message ?? error)}`);
   }
@@ -98,6 +100,36 @@ function runReport(store, cfg, rest) {
     return ok(`✅ 复盘面板已生成：${outPath}\n（已尝试在默认浏览器打开；如未弹出请手动打开该文件）`);
   } catch (error) {
     return err(`生成报告失败：${String(error?.message ?? error)}`);
+  }
+}
+
+/** /retro cleanup — 删除所有已丢弃（discarded）卡片的暂存文件（白名单内）。 */
+function runCleanup(store, cfg, rest) {
+  try {
+    if (!cfg.vaultPath) return err("vaultPath 未配置：运行 /retro config vaultPath <路径>");
+    const discarded = store.listCards("discarded");
+    let removed = [];
+    let failed = [];
+    for (const card of discarded) {
+      if (!card.stagingPath) continue;
+      try {
+        const target = safeJoin(stagingRoot(cfg), card.stagingPath);
+        rmSync(target, { force: true });
+        removed.push(card.stagingPath);
+      } catch {
+        failed.push(card.stagingPath);
+      }
+    }
+    if (removed.length > 0) {
+      store.audit({ actor: "command:cleanup", action: "cleanup-staging", target: removed.join(", "), ok: true, note: `failed ${failed.length}` });
+    }
+    const lines = removed.length > 0
+      ? [`✅ 已清理 ${removed.length} 个已丢弃卡片的暂存文件：`, ...removed.map((f) => `- ${f}`)]
+      : ["没有可清理的已丢弃卡片暂存文件（当前无 discarded 卡片残留）"];
+    if (failed.length > 0) lines.push("", `⚠️ 清理失败 ${failed.length} 个：${failed.join(", ")}`);
+    return ok(lines.join("\n"));
+  } catch (error) {
+    return err(`清理失败：${String(error?.message ?? error)}`);
   }
 }
 
@@ -331,7 +363,23 @@ function runConfig(store, cfg, rest) {
 async function runAdopt(ctx, store, cfg, rest) {
   const [target] = rest;
   if (!target) return err("用法：/retro adopt <proposalId|all>（用 /retro queue 查看待采纳提案）");
-  const proposals = target === "all" ? store.listProposals("pending").filter((p) => p.kind !== "retro-suggest") : [store.getProposal(target)].filter(Boolean);
+  const hasAll = target === "all";
+  let proposals;
+  let skippedLines = [];
+  if (hasAll) {
+    // `all`：先按语义去重，每组只采纳代表，重复项标记 skipped
+    const pending = store.listProposals("pending").filter((p) => p.kind !== "retro-suggest");
+    const groups = dedupeProposals(pending);
+    proposals = groups.map((g) => g.representative);
+    for (const g of groups) {
+      for (const dup of g.duplicates) {
+        store.updateProposal(dup.id, { status: "skipped", skipNote: `与 ${g.representative.title} 重复` });
+        skippedLines.push(`⏭️ ${dup.id} [${dup.kind}]「${dup.title}」→ 已跳过（与「${g.representative.title}」重复）`);
+      }
+    }
+  } else {
+    proposals = [store.getProposal(target)].filter(Boolean);
+  }
   if (proposals.length === 0) return err(`没有可采纳的提案：${target}`);
   const lines = [];
   for (const p of proposals) {
@@ -342,6 +390,7 @@ async function runAdopt(ctx, store, cfg, rest) {
       lines.push(`❌ ${p.id}：${String(error?.message ?? error)}`);
     }
   }
+  if (skippedLines.length > 0) lines.push("", "去重：以下重复提案已跳过：", ...skippedLines);
   return ok(lines.join("\n"));
 }
 
