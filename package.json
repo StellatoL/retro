@@ -10,7 +10,7 @@
     "./cordis.patch.yml": "./dsh-retro/cordis.patch.yml",
     "./package.json": "./package.json"
   },
-  "files": ["dsh-retro/lib", "dsh-retro/skills", "dsh-retro/cordis.patch.yml", "dsh-retro/README.md", "README.md", "LICENSE"],
+  "files": ["dsh-retro/lib", "dsh-retro/skills", "dsh-retro/cordis.patch.yml", "dsh-retro/README.md", "README.md", "README.zh-CN.md", "LICENSE"],
   "engines": { "node": ">=22" },
   "scripts": {
     "check": "node scripts/check.mjs",

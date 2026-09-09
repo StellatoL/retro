@@ -1,6 +1,6 @@
 # 当前架构
 
-本文描述 `dsh-retro 0.3.0` 的现有实现。历史设计保留在 [PLAN.md](../PLAN.md) 和 [M6 面板规划](M6-web-panel.md)，安装方式以 [README](../README.md) 为准。
+本文描述 `dsh-retro 0.3.0` 的现有实现。安装、配置与命令说明见 [English README](../README.md) 或[中文 README](../README.zh-CN.md)。
 
 ## 入口与部署
 

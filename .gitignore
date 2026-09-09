@@ -7,6 +7,12 @@ artifacts/
 coverage/
 *.tgz
 
+# 本地历史规划与执行记录
+/PLAN.md
+/docs/M6-web-panel.md
+/docs/standardization.md
+/docs/superpowers/
+
 # 日志与诊断
 *.log
 apply-error.log

@@ -23,11 +23,11 @@ try {
   });
   const [packed] = JSON.parse(output);
   const files = new Set(packed.files.map((file) => file.path));
-  for (const required of ["package.json", "README.md", "LICENSE", "dsh-retro/skills/retro-writing/SKILL.md", ...Object.values(pkg.exports)]) {
+  for (const required of ["package.json", "README.md", "README.zh-CN.md", "LICENSE", "dsh-retro/skills/retro-writing/SKILL.md", ...Object.values(pkg.exports)]) {
     assert.ok(files.has(required.replace(/^\.\//, "")), `分发包缺少 ${required}`);
   }
   for (const file of files) {
-    assert.ok(/^(?:package\.json$|README\.md$|LICENSE$|dsh-retro\/(?:lib\/|skills\/|README\.md$|cordis\.patch\.yml$))/.test(file), `分发包含非运行文件：${file}`);
+    assert.ok(/^(?:package\.json$|README(?:\.zh-CN)?\.md$|LICENSE$|dsh-retro\/(?:lib\/|skills\/|README\.md$|cordis\.patch\.yml$))/.test(file), `分发包含非运行文件：${file}`);
   }
   const archive = path.join(tmp, packed.filename);
   const integrity = `sha512-${createHash("sha512").update(readFileSync(archive)).digest("base64")}`;
