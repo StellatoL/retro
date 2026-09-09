@@ -87,6 +87,6 @@
 - [x] 使用官方 DSH CLI，在独立临时 `DSH_HOME` 中离线安装 tarball，确认 bundle 自动注册及 `--dump-config` 输出中的插件行。
 - [x] `git diff --check`、完整 diff 审阅、排查个人路径/运行时文件、确认 `.serena/` 不进入提交。
 - [x] 联网恢复后核对用户指定网页、topic 与远端 HEAD，必要时补齐差异；只进行正常快进推送，禁止 force push。
-- [ ] 按用户授权提交中文说明并推送 `origin/main`，读取远端 commit 验证上传；若审批系统仍阻止网络或 Git 写入，保留已完成改动与打包产物，准确告知未上传及具体阻塞原因。
+- [x] 按用户授权提交中文说明并推送 `origin/main`，读取远端 commit 验证上传。
 
-本地 74 项测试、静态检查、两种工作目录冒烟、文档链接、CI YAML 与实际 tarball 加载全部通过，安装包保存在 `artifacts/dsh-retro-0.3.0.tgz`。在线文档与 SSH 远端读取已恢复，已补齐发布方式对照；最后一项在实际提交、推送并核对远端提交后完成。
+本地 74 项测试、静态检查、两种工作目录冒烟、文档链接、CI YAML、实际 tarball 加载及官方 CLI 临时 profile 安装检查全部通过，安装包保存在 `artifacts/dsh-retro-0.3.0.tgz`。已核对在线文档与社区插件清单，标准化代码以 `0d7a0057a8ecfc141748d0c5ea6c3f3a393614bd` 推送至 `origin/main`，并通过 `git ls-remote` 确认远端提交一致。GitHub Actions 的远端运行结果未核验。

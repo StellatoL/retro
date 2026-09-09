@@ -114,7 +114,7 @@ $env:NODE_OPTIONS = '--preserve-symlinks --preserve-symlinks-main'
 
 CLI 安装检查使用项目临时目录中的独立 `DSH_HOME`，通过 `--offline --ignore-scripts --config.auto-install-peers=false` 安装本地产物，仅验证安装、bundle 自动注册和配置合成。该检查关闭自动安装 peer 依赖，pnpm 因此提示缺少宿主依赖；宿主模块的实际加载已由使用本机官方依赖的打包测试单独验证。CLI 检查没有启动 DSH 服务或修改日常使用的 profile。
 
-GitHub Actions 配置覆盖 Ubuntu / Windows 与 Node.js 22 / 24。工作流尚未在本轮远端运行；本地通过不能等同于四个 CI 组合已通过。真实浏览器与真实模型调用也不在本轮自动测试范围内。
+GitHub Actions 配置覆盖 Ubuntu / Windows 与 Node.js 22 / 24，推送主分支时触发。本轮未取得远端运行结果；本地通过不能等同于四个 CI 组合已通过。真实浏览器与真实模型调用也不在本轮自动测试范围内。
 
 ## 分发与后续复核
 
@@ -126,4 +126,4 @@ GitHub Actions 配置覆盖 Ubuntu / Windows 与 Node.js 22 / 24。工作流尚�
 
 本地安装包已生成在 `artifacts/dsh-retro-0.3.0.tgz`，该产物目录不进入 Git 提交。
 
-初期的网络与自动审批故障已恢复，SSH 远端读取成功。发布记录将在正常推送完成并核对远端提交后补齐。
+标准化代码已通过普通推送上传 `origin/main`，提交为 [`0d7a0057a8ecfc141748d0c5ea6c3f3a393614bd`](https://github.com/StellatoL/retro/commit/0d7a0057a8ecfc141748d0c5ea6c3f3a393614bd)。推送后重新执行 `git ls-remote origin refs/heads/main`，远端提交号与该代码提交一致。本节与实施计划的完成状态由后续文档提交补记。
