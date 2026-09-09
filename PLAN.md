@@ -1,4 +1,6 @@
-# DSH 经验复盘管线（dsh-retro）— 完整拆解与规划（v2，全部风险点已核验）
+# DSH 经验复盘管线（dsh-retro）— 历史设计 v2
+
+> 历史归档：本文记录 2026-08-16 基于 DSH 0.1.0-rc.6 的设计过程，保留当时的结论和计划。文中的接口、安装方式、测试数量及博客构建假设可能已经变化。当前行为请阅读 [README](README.md)、[当前架构](docs/architecture.md) 与 [标准化记录](docs/standardization.md)。
 
 > 目标：把"对话/工程结束后自动沉淀经验 → 用户在 Obsidian 中深度审阅与进化 → 双向联动 Astro Blog"构建成一条 CI/CD 式自动化流水线，以**标准 DSH 插件**形态交付。
 >

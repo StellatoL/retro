@@ -1,4 +1,4 @@
-// dsh-retro: pipeline module tests — collectors / distiller / evolvor / commands pure parts.
+// 验证采集、提炼、进化和命令流程，不调用真实模型。
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
@@ -30,7 +30,7 @@ function tmpEnv() {
   return { dir, vault, cfg };
 }
 
-// ---- distiller: buildTranscript ----
+// 从会话事件提取文本
 test("buildTranscript extracts user/assistant/tool/goal lines", () => {
   const events = [
     { type: "user/message", data: { message: { content: [{ type: "text", text: "帮我调 bug" }] } } },
@@ -50,7 +50,7 @@ test("buildTranscript extracts user/assistant/tool/goal lines", () => {
   assert.ok(t.includes("用户反馈:"));
 });
 
-// ---- distiller: extractEvolutionSuggestions ----
+// 提取进化建议
 test("extractEvolutionSuggestions pulls the evolution section items", () => {
   const md = [
     "## 关键经验",
@@ -94,7 +94,7 @@ test("cleanTitle strips heading marks and decorations", () => {
   assert.equal(cleanTitle("**加粗** 标题"), "加粗 标题");
 });
 
-// ---- collectors ----
+// 会话事件采集
 function collectorHarness(cfg) {
   const store = new RetroStore(mkdtempSync(path.join(os.tmpdir(), "retro-col-")));
   const handlers = {};
@@ -113,7 +113,7 @@ function ev(sessionId, type, data) {
 test("collector proposes on goal-complete once per session", () => {
   const { store, handlers } = collectorHarness({ autoProposeOnGoalComplete: true });
   handlers["session/event"](...ev("s1", "goal/change", { goal: { phase: "complete", objective: "目标" } }));
-  handlers["session/event"](...ev("s1", "goal/change", { goal: { phase: "complete", objective: "目标" } })); // duplicate
+  handlers["session/event"](...ev("s1", "goal/change", { goal: { phase: "complete", objective: "目标" } })); // 重复通知
   const proposals = store.listProposals("pending").filter((p) => p.kind === "retro-suggest");
   assert.equal(proposals.length, 1);
   assert.equal(proposals[0].sessionId, "s1");
@@ -168,7 +168,7 @@ test("collector pairs tool errors with real names and codes (no [object Object])
   assert.equal(store.listMaterials().filter((m) => m.kind === "tool-error").length, 1);
 });
 
-// ---- evolvor: dedupe ----
+// 经验重复提示
 test("dedupeSuggestions finds overlapping entries", () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), "retro-dd-"));
   const store = new RetroStore(dir);
@@ -180,15 +180,20 @@ test("dedupeSuggestions finds overlapping entries", () => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-// ---- evolvor: proposals ----
-test("proposeUpdate writes proposal file; adoptProposal applies with .bak", () => {
+// 提案生成与采纳
+test("proposeUpdate writes proposal file; adoptProposal applies with .bak", (t) => {
   const { dir, vault, cfg } = tmpEnv();
   const store = new RetroStore(path.join(dir, "state"));
   ensureDirs(cfg);
   const oldHome = process.env.DSH_HOME;
   process.env.DSH_HOME = path.join(dir, "dsh-home");
+  t.after(() => {
+    if (oldHome === undefined) delete process.env.DSH_HOME;
+    else process.env.DSH_HOME = oldHome;
+    rmSync(dir, { recursive: true, force: true });
+  });
 
-  // seed an existing skill file so .bak is produced
+  // 预先创建技能文件，以验证采纳时产生备份。
   const skillDir = path.join(dir, "dsh-home", "skills", "retro-writing");
   mkdirSync(skillDir, { recursive: true });
   writeFileSync(path.join(skillDir, "SKILL.md"), "旧内容");
@@ -206,11 +211,9 @@ test("proposeUpdate writes proposal file; adoptProposal applies with .bak", () =
   const final = readFileSync(path.join(skillDir, "SKILL.md"), "utf8");
   assert.ok(final.includes("## 新规则"));
   assert.equal(store.getProposal(prop.id).status, "adopted");
-  process.env.DSH_HOME = oldHome;
-  rmSync(dir, { recursive: true, force: true });
 });
 
-// ---- evolvor: MOC ----
+// 经验库索引
 test("updateMoc builds and refreshes the experience index", () => {
   const { dir, vault, cfg } = tmpEnv();
   const store = new RetroStore(path.join(dir, "state"));
@@ -225,7 +228,7 @@ test("updateMoc builds and refreshes the experience index", () => {
   assert.ok(text.includes("第一条经验")); // 链接基于 日期-时间-主题 文件名
   assert.ok(text.includes("entryCount: 1"));
 
-  // second settle → index updates to 2
+  // 第二次落库后，索引应更新为两条。
   const entry2 = store.addEntry({ title: "第二条经验", status: "drafted", tags: [] });
   draftEntryFile(cfg, store, entry2);
   settleEntry(cfg, store, entry2);
@@ -236,7 +239,7 @@ test("updateMoc builds and refreshes the experience index", () => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-// ---- evolvor: proposal dedupe (B1) ----
+// 提案去重
 test("dedupeProposals groups semantically-similar pending proposals", () => {
   const proposals = [
     { id: "a", kind: "skill", title: "空会话周报处理规则", reason: "无数据时避免编造", status: "pending" },
@@ -263,7 +266,7 @@ test("dedupeProposals ignores non-pending and retro-suggest", () => {
   assert.equal(groups.length, 0);
 });
 
-// ---- commands pure helpers ----
+// 命令参数解析与周报去重
 test("parseArgs handles quotes; flags extracts options", () => {
   assert.deepEqual(parseArgs('review rc-1 edit "意见 内容" --dir 03_Full_Notes'), ["review", "rc-1", "edit", "意见 内容", "--dir", "03_Full_Notes"]);
   const f = flags(["draft", "today", "--tags", "a,b", "--push"]);
@@ -290,12 +293,17 @@ test("findTodayWeeklyCard blocks duplicate same-day weekly cards", () => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-test("runAdopt all adopts each group's representative and skips duplicates", async () => {
+test("runAdopt all adopts each group's representative and skips duplicates", async (t) => {
   const { dir, vault, cfg } = tmpEnv();
   const store = new RetroStore(path.join(dir, "state"));
   ensureDirs(cfg);
   const oldHome = process.env.DSH_HOME;
   process.env.DSH_HOME = path.join(dir, "dsh-home");
+  t.after(() => {
+    if (oldHome === undefined) delete process.env.DSH_HOME;
+    else process.env.DSH_HOME = oldHome;
+    rmSync(dir, { recursive: true, force: true });
+  });
   mkdirSync(path.join(dir, "dsh-home", "skills", "retro-writing"), { recursive: true });
 
   store.addProposal({ id: "p1", kind: "skill", title: "空会话周报处理规则", reason: "无数据时避免编造", status: "pending" });
@@ -319,6 +327,42 @@ test("runAdopt all adopts each group's representative and skips duplicates", asy
   assert.equal(store.getProposal("p2").status, "skipped");
   assert.ok(store.getProposal("p2").skipNote && store.getProposal("p2").skipNote.includes("重复"));
 
-  process.env.DSH_HOME = oldHome;
-  rmSync(dir, { recursive: true, force: true });
+});
+
+test("会话销毁由独立生命周期事件采集，并避免重复提议", (t) => {
+  const { store, handlers } = collectorHarness({ autoProposeOnGoalComplete: true });
+  t.after(() => rmSync(store.dir, { recursive: true, force: true }));
+  assert.equal(typeof handlers["session/disposed"], "function");
+  const session = { id: "s1", header: { cwd: "/workspace" } };
+  handlers["session/disposed"](session);
+  handlers["session/disposed"](session);
+  assert.equal(store.listProposals().length, 1);
+  store.addCard({ sessionIds: ["s2"], title: "已复盘" });
+  handlers["session/disposed"]({ id: "s2" });
+  assert.equal(store.listProposals().length, 1);
+});
+
+test("采纳提案保留已有规则与技能元数据", (t) => {
+  const { dir, cfg } = tmpEnv();
+  const previous = process.env.DSH_HOME;
+  process.env.DSH_HOME = path.join(dir, "home");
+  t.after(() => {
+    if (previous === undefined) delete process.env.DSH_HOME;
+    else process.env.DSH_HOME = previous;
+    rmSync(dir, { recursive: true, force: true });
+  });
+  const store = new RetroStore(path.join(dir, "state"));
+  ensureDirs(cfg);
+  const skillDir = path.join(process.env.DSH_HOME, "skills", "retro-writing");
+  mkdirSync(skillDir, { recursive: true });
+  const original = "---\nname: retro-writing\ndescription: 复盘技能\n---\n\n# 用户原有规则\n不能丢失\n";
+  const target = path.join(skillDir, "SKILL.md");
+  writeFileSync(target, original);
+  const proposed = proposeUpdate(cfg, store, { kind: "skill", title: "新增规则", content: "## 新规则\n- 检查接口契约", reason: "复盘结论" });
+  adoptProposal(cfg, store, store.getProposal(proposed.id));
+  const updated = readFileSync(target, "utf8");
+  assert.ok(updated.startsWith("---\nname: retro-writing\n"));
+  assert.ok(updated.includes("不能丢失"));
+  assert.ok(updated.includes("检查接口契约"));
+  assert.equal(readFileSync(`${target}.bak`, "utf8"), original);
 });

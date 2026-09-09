@@ -1,13 +1,12 @@
-// Integration smoke: exercise apply() with a stub ctx (no real dsh runtime).
-// Verifies: module wiring, command/tool registration, collector attach,
-// and that boot writes stay inside the (temp) vault paths.
+// 使用宿主上下文替身验证插件入口、命令与工具注册、事件订阅。
+// 初始化写入限于本次测试的临时目录，不启动真实 DSH 服务。
 import { mkdtempSync, rmSync, existsSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
 const tmp = mkdtempSync(path.join(os.tmpdir(), "retro-ctx-"));
 process.env.DSH_RETRO_DIR = path.join(tmp, "retro-state");
-process.env.DSH_HOME = path.join(tmp, "dsh-home"); // keep ensureSkillFiles from touching the real ~/.dsh
+process.env.DSH_HOME = path.join(tmp, "dsh-home"); // 技能安装也必须使用临时目录。
 
 const registered = { commands: [], tools: [], listeners: [], routes: [] };
 const ctx = {
@@ -16,7 +15,7 @@ const ctx = {
   on(type, cb, opts) { registered.listeners.push({ type, opts }); },
   commands: { register: (def) => registered.commands.push(def) },
   tools: { register: (def) => registered.tools.push(def) },
-  // optional-injection stub: simulate webServer being available
+  // 模拟可选的 webServer 服务已加载。
   inject(names, callback) {
     if (Array.isArray(names) && names.includes("webServer")) {
       const child = {
@@ -30,7 +29,7 @@ const ctx = {
 };
 
 const { apply, inject, name } = await import("../lib/index.js");
-apply(ctx, ctx.config); // cordis convention: apply(ctx, config)
+apply(ctx, ctx.config); // Cordis 通过第二个参数传入配置。
 
 const problems = [];
 if (name !== "retro") problems.push(`name=${name}`);

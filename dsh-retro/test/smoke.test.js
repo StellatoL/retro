@@ -1,4 +1,4 @@
-// dsh-retro smoke tests: pure modules only (no dsh runtime needed).
+// 基础模块测试，无需启动 DSH 运行时。
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
@@ -40,7 +40,7 @@ function testCfg(vault) {
   };
 }
 
-// ---- util ----
+// 公共工具
 test("safeJoin rejects traversal", () => {
   const root = "C:/vault";
   assert.throws(() => safeJoin(root, "../evil.md"));
@@ -84,7 +84,7 @@ test("textOf handles string and block content", () => {
   assert.equal(textOf({ content: [{ type: "tool-result", content: "done" }] }), "done");
 });
 
-// ---- store ----
+// 状态存储
 test("RetroStore roundtrip and audit", () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), "retro-store-"));
   const store = new RetroStore(dir);
@@ -101,7 +101,7 @@ test("RetroStore roundtrip and audit", () => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-// ---- settler ----
+// 暂存与落库
 test("staging write whitelist", () => {
   const { dir, vault } = tmpVault();
   const cfg = testCfg(vault);
@@ -145,7 +145,7 @@ test("draft card file + settle keep + discard", () => {
   assert.ok(staged.includes("用 X 代替 Y"));
 
   const { title, body } = splitCardFile(staged);
-  assert.equal(title, null); // no # heading in this draft body
+  assert.equal(title, null); // 草稿正文中没有一级标题。
 
   const settled = settleCard(cfg, store, card, { action: "keep", dir: "Index/03_Full_Notes/04_Retro" });
   assert.equal(settled.status, "approved");
@@ -205,7 +205,7 @@ test("mergeIntoTemplate sanitizes a corrupted title (## leak)", () => {
     ""
   ].join("\n");
   const merged = mergeIntoTemplate(template, "## 项目目标（一句话）", "## 项目目标\n实现 X");
-  // The H1 must be clean (no "##" inside it), and the section heading intact.
+  // 一级标题不应混入多余井号，二级章节标题应保持完整。
   const h1 = /^# (.+)$/m.exec(merged)[1];
   assert.ok(!h1.includes("##"));
   assert.equal(h1, "项目目标（一句话）");
@@ -293,11 +293,11 @@ test("mergeIntoTemplate fills template sections and appends extras", () => {
   assert.ok(merged.includes("## 额外小节"));
   assert.ok(merged.includes("内容 B"));
   assert.ok(!merged.includes("{{title}}"));
-  // template's empty 行动项 stays
+  // 模板中原有的空行动项章节应保留。
   assert.ok(merged.includes("## 行动项"));
 });
 
-// ---- config ----
+// 配置
 test("config precedence: defaults < file overrides", () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), "retro-cfg-"));
   process.env.DSH_RETRO_DIR = dir;
@@ -307,7 +307,7 @@ test("config precedence: defaults < file overrides", () => {
   const cfg2 = loadConfig({ vaultPath: "C:/row" });
   assert.equal(cfg2.vaultPath, "C:/file");
   assert.equal(cfg2.blogAutoPush, true);
-  assert.equal(cfg2.llmProvider, "deepseek-official"); // default preserved
+  assert.equal(cfg2.llmProvider, "deepseek-official"); // 未覆盖的默认值应保留。
   delete process.env.DSH_RETRO_DIR;
   rmSync(dir, { recursive: true, force: true });
 });
@@ -318,7 +318,7 @@ test("config is privacy-neutral: empty defaults, env vars drive paths", () => {
   delete process.env.DSH_RETRO_VAULT;
   delete process.env.DSH_RETRO_BLOG;
   const cfg = loadConfig({});
-  assert.equal(cfg.vaultPath, ""); // no personal paths baked into the repo
+  assert.equal(cfg.vaultPath, ""); // 默认配置不包含个人路径。
   assert.equal(cfg.blogPath, "");
   process.env.DSH_RETRO_VAULT = "C:/env-vault";
   process.env.DSH_RETRO_BLOG = "C:/env-blog";

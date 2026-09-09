@@ -1,4 +1,4 @@
-// dsh-retro: publisher unit tests (git runner injected, no real git).
+// 博客联动测试：替换 Git 执行器，不触发真实提交或推送。
 import { test, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
@@ -37,17 +37,17 @@ test("draftBlogPost writes valid frontmatter and unique slug", () => {
   const store = new RetroStore(path.join(dir, "state"));
   const r1 = draftBlogPost(cfg, store, { title: "经验：踩坑记录", content: "正文", tags: ["a"], category: "技术" });
   assert.equal(r1.ok, true);
-  assert.equal(r1.slug, "经验-踩坑记录"); // slugify: CJK kept, punctuation → dash
+  assert.equal(r1.slug, "经验-踩坑记录"); // 保留中文，标点改为连字符。
   const file = readFileSync(path.join(blog, "src", "content", "posts", `${r1.slug}.md`), "utf8");
-  assert.ok(file.includes('title: "经验：踩坑记录"')); // fullwidth colon → quoted
+  assert.ok(file.includes('title: "经验：踩坑记录"')); // 含全角冒号的标题加引号。
   assert.ok(file.includes("draft: true"));
   assert.ok(file.includes("published: "));
   assert.ok(file.includes("tags:"));
   assert.ok(file.includes("category: 技术"));
-  // uniqueness: same title gets -2
+  // 同名文章使用 -2 后缀，避免覆盖。
   const r2 = draftBlogPost(cfg, store, { title: "经验：踩坑记录", content: "x" });
   assert.equal(r2.slug, "经验-踩坑记录-2");
-  // store records the publish queue item
+  // 状态存储应记录发布队列条目。
   assert.equal(store.getPublish(r1.slug).status, "drafted");
   rmSync(dir, { recursive: true, force: true });
 });
@@ -78,15 +78,15 @@ test("captureBlogPosts creates entry drafts once", () => {
 
   const r1 = captureBlogPosts(cfg, store, { scope: "published" });
   assert.equal(r1.ok, true);
-  assert.equal(r1.created.length, 1); // only published
+  assert.equal(r1.created.length, 1); // 默认只抓取已发布文章。
   const entry = store.listEntries()[0];
   assert.equal(entry.source, "blog");
   assert.equal(entry.sourceSlug, "published");
   assert.ok(entry.links[0].includes("https://example.com/published/"));
-  // entry draft file exists under _entries
+  // 条目草稿位于配置的 _entries 目录中。
   assert.ok(readdirSync(path.join(cfg.vaultPath, "Index", "06_Retro", "_entries")).length === 1);
 
-  // second run: no duplicates
+  // 再次抓取不产生重复条目。
   const r2 = captureBlogPosts(cfg, store, { scope: "published" });
   assert.equal(r2.created.length, 0);
   assert.equal(store.listEntries().length, 1);
@@ -103,11 +103,11 @@ test("publishBlogPost flips draft, commits and pushes via injected runner", asyn
   const result = await publishBlogPost(cfg, store, { slug: r1.slug, push: true });
   assert.equal(result.ok, true);
   assert.equal(result.pushed, true);
-  // git called with add/commit/push
+  // 验证 Git 暂存、提交与推送的调用顺序。
   assert.ok(calls.some((a) => a[0] === "add"));
   assert.ok(calls.some((a) => a[0] === "commit" && a.join(" ").includes(r1.slug)));
   assert.ok(calls.some((a) => a[0] === "push"));
-  // file now draft:false
+  // 文件中的草稿标记应已关闭。
   const text = readFileSync(path.join(blog, "src", "content", "posts", `${r1.slug}.md`), "utf8");
   assert.ok(text.includes("draft: false"));
   assert.equal(store.getPublish(r1.slug).status, "published");
@@ -124,7 +124,7 @@ test("publishBlogPost refuses non-draft posts", async () => {
   const second = await publishBlogPost(cfg, store, { slug: r1.slug, push: false });
   assert.equal(second.ok, false);
   assert.match(second.error, /不是草稿/);
-  assert.equal(calls.filter((a) => a[0] === "commit").length, 1); // no second commit
+  assert.equal(calls.filter((a) => a[0] === "commit").length, 1); // 不重复提交。
   rmSync(dir, { recursive: true, force: true });
 });
 

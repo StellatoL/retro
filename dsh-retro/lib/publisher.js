@@ -1,8 +1,7 @@
-// dsh-retro: publisher — Obsidian ⇄ Astro Blog (bidirectional).
-// Verified against the user's Astro blog: src/content/config.ts posts schema:
-//   title/published (required), updated?, draft? (default false), description?, image?, tags[]?, category?, lang?
-// Verified: content-utils.ts filters `draft !== true` in PROD → drafts never deploy.
-// The public base URL comes from cfg.blogBaseUrl (no hardcoded personal URLs).
+// 博客联动：面向 src/content/posts 下的 Markdown 文章。
+// 站点内容模型需支持 title、published、draft、description、tags、category 等字段。
+// draft: true 是否在生产构建中排除取决于站点实现，插件不控制站点构建。
+// 公开链接前缀来自 cfg.blogBaseUrl。
 import path from "node:path";
 import { mkdirSync, readdirSync } from "node:fs";
 import { execFile } from "node:child_process";
@@ -13,10 +12,13 @@ import { readStaging, readVaultNote, writeStaging } from "./settler.js";
 const execFileAsync = promisify(execFile);
 
 function postsDir(cfg) {
-  return path.join(cfg.blogPath, "src", "content", "posts");
+  if (typeof cfg.blogPath !== "string" || !cfg.blogPath.trim()) {
+    throw new Error("blogPath 未配置：运行 /retro config blogPath <路径> 或设置环境变量 DSH_RETRO_BLOG");
+  }
+  return safeJoin(cfg.blogPath, "src/content/posts");
 }
 
-/** List blog posts: [{ slug, title, published, draft, description, tags, category, file }]. */
+/** 列出文章的主题名、标题、发布日期、草稿状态、分类和文件路径等元数据。 */
 export function listBlogPosts(cfg) {
   const dir = postsDir(cfg);
   let files = [];
@@ -45,7 +47,7 @@ export function listBlogPosts(cfg) {
   return { ok: true, posts };
 }
 
-/** Unique slug for a new post (appends a counter when the file exists). */
+/** 为新文章选择唯一文件名，已占用时追加序号。 */
 function uniqueSlug(cfg, base) {
   const dir = postsDir(cfg);
   let slug = base;
@@ -57,7 +59,7 @@ function uniqueSlug(cfg, base) {
 }
 
 /**
- * Obsidian → Blog: create a draft post (draft: true).
+ * 知识库到博客：创建带 draft: true 标记的文章草稿。
  */
 export function draftBlogPost(cfg, store, { title, content, description = "", tags = [], category = "", actor = "command" }) {
   const dir = postsDir(cfg);
@@ -79,7 +81,7 @@ export function draftBlogPost(cfg, store, { title, content, description = "", ta
   return { ok: true, slug, file, path: `src/content/posts/${file}`, draft: true };
 }
 
-/** Blog draft from a vault note path (whitelisted read) or a retro card. */
+/** 从只读白名单内的知识库笔记或复盘卡片创建博客草稿。 */
 export function draftBlogFromNote(cfg, store, { notePath, card, actor = "command" }) {
   let title;
   let content;
@@ -105,9 +107,9 @@ export function draftBlogFromNote(cfg, store, { notePath, card, actor = "command
   return { ...result, title };
 }
 
-/** Draft → publish: set draft:false and git commit (+ optional push). */
+/** 将草稿标记改为 false 后提交 Git；仅在显式开启时推送。 */
 export async function publishBlogPost(cfg, store, { slug, push = cfg.blogAutoPush, actor = "command" }) {
-  const file = path.join(postsDir(cfg), `${slug}.md`);
+  const file = safeJoin(postsDir(cfg), `${slug}.md`);
   const text = readOptional(file);
   if (text === undefined) return { ok: false, error: `文章不存在：${slug}` };
   const { data, body } = parseFrontmatter(text);
@@ -139,7 +141,7 @@ export async function publishBlogPost(cfg, store, { slug, push = cfg.blogAutoPus
   return { ok: true, slug, committed: true, pushed: push, blogUrl: base ? `${base}/${slug}/` : null };
 }
 
-/** Blog → Obsidian: capture published (or all) posts as permanent-note drafts in staging/_entries. */
+/** 博客到知识库：将选定文章抓取为待确认的永久笔记草稿。 */
 export function captureBlogPosts(cfg, store, { scope = "published", actor = "command" } = {}) {
   const listing = listBlogPosts(cfg);
   if (!listing.ok) return listing;
@@ -186,14 +188,13 @@ export function captureBlogPosts(cfg, store, { scope = "published", actor = "com
   return { ok: true, created, skipped: targets.length - created.length };
 }
 
-// Git runner seam: replaceable in tests via setGitRunnerForTest (avoids
-// spawning real git in sandboxed/unit environments).
+// Git 执行器可在测试中替换，避免测试触发真实提交与推送。
 let gitRunner = async (cfg, args) => {
   const { stdout, stderr } = await execFileAsync("git", args, { cwd: cfg.blogPath });
   return (stdout || stderr).trim();
 };
 
-/** Test-only seam: swap the git runner (returns the previous runner). */
+/** 测试专用：替换 Git 执行器，并返回原执行器以便恢复。 */
 export function setGitRunnerForTest(runner) {
   const previous = gitRunner;
   if (runner === null) gitRunner = async (cfg, args) => {

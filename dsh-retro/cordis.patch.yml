@@ -1,12 +1,7 @@
-# dsh-retro bundle patch: inserts the retro plugin row(s) into the profile.
-#
-# The bundle patch layer is applied by the profile compositor when this package
-# is listed in `dsh.profile.bundles`. Rows can be overridden by the user's own
-# profile `cordis.patch.yml` (last write wins per row id).
-#
-# Runtime-adjustable settings (vaultPath, blogPath, stagingDir, ...) live in
-# code defaults + `~/.dsh/retro/config.json` (see `/retro config`); keep this
-# row config minimal.
+# dsh plugin 安装后将本包加入 profile 的 bundle 层，自动插入复盘插件。
+# 必须使用裸包名，客户端模块发现器才能读取 package.json 中的 dsh.client。
+# 用户的 profile patch 后应用，可按同一行 id 覆盖配置。
+# 个人路径通过 /retro config 或环境变量配置，不写入分发包。
 - insert:
     - id: retro
       name: dsh-retro

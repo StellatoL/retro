@@ -1,4 +1,4 @@
-// dsh-retro: durable JSON store (materials, cards, entries, publish queue, audit).
+// JSON 状态存储：保存素材、卡片、条目、发布队列、提案和审计记录。
 import path from "node:path";
 import { mkdirSync } from "node:fs";
 import { atomicWrite, readOptional, shortId, todayStamp } from "./util.js";
@@ -31,7 +31,7 @@ export class RetroStore {
         this.data = { ...EMPTY(), ...parsed };
       }
     } catch (error) {
-      // Corrupt store: keep in-memory defaults; next save overwrites.
+      // 解析失败时保留内存默认值；后续保存会覆盖原文件。
       this.data = EMPTY();
       this.data.lastError = String(error?.message ?? error);
     }
@@ -41,7 +41,7 @@ export class RetroStore {
     atomicWrite(this.path, JSON.stringify(this.data, null, 2));
   }
 
-  // ---- materials ----
+  // 素材
   addMaterial({ sessionId = null, workspace = null, kind, summary, importance = 1, links = [], ts = Date.now() }) {
     const material = { id: `mat-${todayStamp()}-${shortId()}`, sessionId, workspace, kind, summary, importance, links, ts };
     this.data.materials.push(material);
@@ -56,7 +56,7 @@ export class RetroStore {
       .reverse();
   }
 
-  // ---- cards ----
+  // 复盘卡片
   addCard(card) {
     const now = new Date().toISOString();
     const id = `rc-${todayStamp()}-${shortId()}`;
@@ -85,7 +85,7 @@ export class RetroStore {
     return this.data.cards.find((c) => c.id === id);
   }
 
-  /** Cards for a session (dedupe: avoid double-drafting one session). */
+  /** 查找某会话的已有卡片，用于避免重复生成草稿。 */
   cardForSession(sessionId) {
     return this.data.cards.find((c) => c.sessionIds.includes(sessionId));
   }
@@ -103,7 +103,7 @@ export class RetroStore {
     return list.reverse();
   }
 
-  // ---- entries (permanent experience atoms) ----
+  // 经验条目
   addEntry(entry) {
     const now = new Date().toISOString();
     const full = { id: `exp-${todayStamp()}-${shortId()}`, createdAt: now, updatedAt: now, ...entry };
@@ -128,7 +128,7 @@ export class RetroStore {
     return [...this.data.entries].reverse();
   }
 
-  // ---- publish queue ----
+  // 发布队列
   addPublish(item) {
     this.data.publish.push({ id: `pub-${todayStamp()}-${shortId()}`, createdAt: new Date().toISOString(), ...item });
     this.save();
@@ -152,7 +152,7 @@ export class RetroStore {
     return list.reverse();
   }
 
-  // ---- proposals (skill / AGENTS.md updates awaiting user adoption) ----
+  // 等待用户采纳的技能或 AGENTS.md 更新提案
   addProposal(proposal) {
     const full = { id: `prop-${todayStamp()}-${shortId()}`, createdAt: new Date().toISOString(), status: "pending", ...proposal };
     this.data.proposals.push(full);
@@ -176,7 +176,7 @@ export class RetroStore {
     return this.data.proposals.filter((p) => p.status === status);
   }
 
-  // ---- audit ----
+  // 审计记录
   audit({ actor, action, target, ok = true, note = null }) {
     this.data.audit.push({ ts: Date.now(), actor, action, target, ok, note });
     if (this.data.audit.length > 2000) this.data.audit = this.data.audit.slice(-2000);
@@ -188,7 +188,7 @@ export class RetroStore {
     return this.data.audit.slice(-limit).reverse();
   }
 
-  // ---- meta ----
+  // 周报等元数据
   getMeta() {
     return this.data.meta;
   }

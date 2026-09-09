@@ -1,0 +1,8 @@
+# 源码和配置统一使用 LF；二进制文件由 Git 自动识别。
+* text=auto eol=lf
+*.js text eol=lf
+*.mjs text eol=lf
+*.json text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.md text eol=lf

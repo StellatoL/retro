@@ -1,16 +1,15 @@
-// dsh-retro: model-facing tools — retro_capture / retro_draft.
-// Tools run inside agent execution; ALL writes go through the plugin services
-// (RetroStore / staging whitelist), never direct vault paths.
+// 模型工具 retro_capture 与 retro_draft：写入统一经过状态存储或暂存白名单，
+// 工具参数不能直接指定知识库中的任意写入路径。
 import { defineTool } from "@deepseek-ai/dsh-tools";
 
-/** Register the retro tools on ctx.tools. */
+/** 向 ctx.tools 注册素材采集和复盘草稿工具。 */
 export function registerTools(ctx, store, cfg) {
   ctx.tools.register(defineTool({
     name: "retro_capture",
     description: "标记当前会话中值得沉淀到经验库的素材（重要修复、关键决策、用户纠正、踩坑）。调用后素材进入复盘管线，后续 /retro 或 /weekly 会自动纳入。",
     parameters: {
       summary: { type: "string", required: true, description: "素材摘要：发生了什么、结论是什么（一两句话，保留关键细节）" },
-      importance: { type: "number", description: "重要性 0-3，默认 1（3 = 必须沉淀）" },
+      importance: { type: "integer", enum: [0, 1, 2, 3], description: "重要性 0-3，默认 1（3 = 必须沉淀）" },
       links: { type: "array", items: { type: "string" }, description: "相关文件路径或引用（可选）" }
     },
     output: {
@@ -24,10 +23,11 @@ export function registerTools(ctx, store, cfg) {
         }
       },
       render(args, value) {
-        return value.ok ? `✅ 已捕获素材 ${value.materialId}` : `❌ ${value.message}`;
+        return [{ type: "text", text: value.ok ? `✅ 已捕获素材 ${value.materialId}` : `❌ ${value.message}` }];
       }
     },
     async execute(args, exec) {
+      exec?.signal?.throwIfAborted();
       const sessionId = exec?.sessionId ?? exec?.agent?.session?.id ?? null;
       const material = store.addMaterial({
         sessionId,
@@ -55,18 +55,20 @@ export function registerTools(ctx, store, cfg) {
         additionalProperties: false,
         properties: {
           ok: { type: "boolean", required: true },
-          cardId: { type: "string" },
-          path: { type: "string" },
+          cardId: { oneOf: [{ type: "string" }, { type: "null" }] },
+          path: { oneOf: [{ type: "string" }, { type: "null" }] },
           message: { type: "string" }
         }
       },
       render(args, value) {
-        return value.ok
+        const text = value.ok
           ? `✅ 复盘草稿已生成：${value.path}\n卡片 id：${value.cardId}\n请在 Obsidian 中审阅，然后运行 /retro review ${value.cardId} keep`
           : `❌ ${value.message}`;
+        return [{ type: "text", text }];
       }
     },
     async execute(args, exec) {
+      exec?.signal?.throwIfAborted();
       const { distillSession } = await import("./distiller.js");
       const { draftCardFiles } = await import("./settler.js");
       const { dedupeSuggestions } = await import("./evolvor.js");
@@ -83,8 +85,11 @@ export function registerTools(ctx, store, cfg) {
         return { ok: true, cardId: existing.id, path: existing.stagingPath, message: `该会话已有卡片 ${existing.id}（${existing.stagingPath}），未重复生成` };
       }
 
-      const signal = AbortSignal.timeout(240000);
+      // 合并调用者取消与工具自身的超时，防止取消后继续生成文件。
+      const timeout = AbortSignal.timeout(240000);
+      const signal = exec?.signal ? AbortSignal.any([exec.signal, timeout]) : timeout;
       const { title, markdown } = await distillSession(ctx, cfg, sessionId, { signal });
+      signal.throwIfAborted();
       const card = store.addCard({
         sessionIds: [sessionId],
         workspace: null,

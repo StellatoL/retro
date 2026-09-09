@@ -1,11 +1,17 @@
-# dependencies
+# 依赖与本地工具状态
 node_modules/
+.serena/
+.cache/
+.tmp/
+artifacts/
+coverage/
+*.tgz
 
-# logs & diagnostics
+# 日志与诊断
 *.log
 apply-error.log
 
-# credentials / secrets (belt and braces — never commit these)
+# 个人配置与凭据
 .env
 .env.*
 *.credentials.yaml
@@ -13,11 +19,11 @@ apply-error.log
 *.pem
 *.key
 
-# dsh runtime state
+# DSH 运行状态
 .dsh/
 sessions/
 storages/
 
-# OS noise
+# 操作系统生成的文件
 .DS_Store
 Thumbs.db

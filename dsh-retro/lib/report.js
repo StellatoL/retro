@@ -1,5 +1,4 @@
-// dsh-retro: report — self-contained HTML dashboard of the retro state.
-// Pure rendering: takes a RetroStore + cfg, returns HTML. No file I/O here.
+// 将复盘状态渲染成独立 HTML 报告，不执行文件读写。
 import { todayStamp, nowStamp } from "./util.js";
 
 const STATUS_BADGE = {
@@ -13,7 +12,7 @@ const STATUS_COLOR = {
 
 function badge(status) {
   const color = STATUS_COLOR[status] ?? "#8a8f98";
-  return `<span class="badge" style="background:${color}1a;color:${color};border:1px solid ${color}44">${status}</span>`;
+  return `<span class="badge" style="background:${color}1a;color:${color};border:1px solid ${color}44">${esc(status)}</span>`;
 }
 
 function esc(value) {
@@ -28,7 +27,7 @@ function statCard(label, value, hint = "") {
   return `<div class="stat"><div class="stat-value">${value}</div><div class="stat-label">${label}</div>${hint ? `<div class="stat-hint">${esc(hint)}</div>` : ""}</div>`;
 }
 
-/** Render the full dashboard HTML for one retro state snapshot. */
+/** 根据当前状态快照生成完整报告。 */
 export function renderReport(store, cfg = {}) {
   const meta = store.getMeta();
   const cards = store.listCards();

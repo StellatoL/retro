@@ -1,9 +1,7 @@
-// dsh-retro: event collector — subscribes to the session event firehose and
-// samples "retro-worthy" materials + pending proposals.
-//
-// Verified event vocabulary (dsh-session 0.1.0-rc.6): goal/change, feedback/record,
-// session/created, session/disposed, user/message, assistant/message, turn/end, ...
-// The firehose is `session/event` (global:true listeners receive every appended event).
+// 事件采集器：从会话事件中提取复盘素材，并按需创建待处理建议。
+// 按 dsh-session 0.1.2-rc.1 区分日志事件与生命周期通知：
+// goal/change、feedback/record 等经 session/event 接收，
+// session/disposed 则单独订阅；global: true 可接收各会话的事件。
 
 const RETRO_INTENT_RE = /(复盘|总结|沉淀|回炉|经验|retro)/i;
 const RETRO_IMPORTANCE = { goal: 3, feedback: 2, intent: 2, disposed: 1, toolError: 2 };
@@ -15,12 +13,25 @@ export function attachCollector(ctx, store, cfg) {
   const MAX_CALL_TRACK = 5000;
 
   ctx.on("session/event", (session, event) => {
+    observe(session, event);
+  }, { global: true });
+
+  // 销毁是独立生命周期通知，不属于追加到日志中的 session/event。
+  ctx.on("session/disposed", (session) => {
+    observe(session, { type: "session/disposed" });
+  }, { global: true });
+
+  function observe(session, event) {
     try {
       handleEvent(session, event);
     } catch (error) {
-      ctx.logger?.warn?.(`[retro] collector error: ${String(error?.message ?? error)}`);
+      ctx.logger?.warn?.(`[retro] 采集失败：${String(error?.message ?? error)}`);
     }
-  }, { global: true });
+  }
+
+  function hasPendingSuggestion(sessionId) {
+    return store.listProposals("pending").some((p) => p.kind === "retro-suggest" && p.sessionId === sessionId);
+  }
 
   function sessionIdOf(session, event) {
     const id = session?.id ?? event?.data?.sessionId ?? event?.sessionId ?? null;
@@ -56,7 +67,9 @@ export function attachCollector(ctx, store, cfg) {
           if (store.cardForSession(sid)) return;
           const objective = goal?.objective ?? "（无目标描述）";
           store.addMaterial({ sessionId: sid, workspace, kind: "goal-complete", summary: `目标完成：${objective}`, importance: RETRO_IMPORTANCE.goal });
-          store.addProposal({ kind: "retro-suggest", sessionId: sid, reason: "goal-complete", detail: objective });
+          if (!hasPendingSuggestion(sid)) {
+            store.addProposal({ kind: "retro-suggest", sessionId: sid, reason: "goal-complete", detail: objective });
+          }
           store.audit({ actor: "collector", action: "propose", target: `session:${sid}`, note: "goal-complete" });
         }
         break;
@@ -70,7 +83,7 @@ export function attachCollector(ctx, store, cfg) {
         break;
       }
       case "session/disposed": {
-        if (!sid) break;
+        if (!sid || store.cardForSession(sid) || hasPendingSuggestion(sid)) break;
         store.addProposal({ kind: "retro-suggest", sessionId: sid, reason: "session-disposed", detail: "会话已结束，可考虑复盘" });
         store.audit({ actor: "collector", action: "propose", target: `session:${sid}`, note: "session-disposed" });
         break;
@@ -90,7 +103,7 @@ export function attachCollector(ctx, store, cfg) {
         const isError = data.error !== undefined || block?.isError === true;
         if (isError && sid) {
           const callId = data.message?.source?.callId ?? block?.toolCallId ?? null;
-          const tool = (typeof callId === "string" && callIdToTool.get(callId)) ?? data.name ?? "tool";
+          const tool = (typeof callId === "string" ? callIdToTool.get(callId) : undefined) ?? data.name ?? "tool";
           const code = data.error?.code ?? data.error?.name ?? null;
           const text = typeof block?.content?.[0]?.text === "string" ? block.content[0].text : "";
           const detail = (code ? `${code}` : "") + (text ? (code ? `：` : "") + text.slice(0, 180) : "");

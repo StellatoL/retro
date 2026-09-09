@@ -1,8 +1,7 @@
-// dsh-retro client bundle — served at runtime by dsh-client-modules
-// (`GET /plugins/dsh-retro/client.js`), executed by the shell's __ModuleLoader__.
-// Hand-written in the official bundle format: CJS-style factory, no bundler.
-// The panel is plain DOM + fetch("/retro/api"); the entry point is a native
-// sidebar slot (`sidebar.footer.action`) with a floating-button fallback.
+// 客户端由 dsh-client-modules 在 /plugins/dsh-retro/client.js 提供，
+// 使用宿主 __ModuleLoader__ 的工厂协议加载，无需额外打包器。
+// 面板通过 DOM 和 /retro/api 展示数据，优先使用原生侧边栏插槽，
+// 插槽不可用时使用浮动按钮。
 window.__ModuleLoader__.load({
   id: "dsh-retro",
   factory: (require) => {
@@ -10,8 +9,7 @@ window.__ModuleLoader__.load({
     var exports = module.exports;
     Object.defineProperty(exports, Symbol.toStringTag, { value: "Module" });
 
-    // No client-side service dependencies declared: we probe ctx.get("slots")
-    // at apply time and fall back to a floating button when unavailable.
+    // 不声明强制客户端依赖；挂载时探测 slots，不可用则启用浮动入口。
     var inject = [];
 
     var React = require("react");
@@ -52,6 +50,7 @@ window.__ModuleLoader__.load({
         document.head.appendChild(style);
       }
 
+      var disposed = false;
       var open = false;
       var pollTimer = null;
       var REFRESH_MS = 30000;
@@ -61,6 +60,7 @@ window.__ModuleLoader__.load({
       document.body.appendChild(panel);
 
       function toggle() {
+        if (disposed) return;
         open = !open;
         if (open) {
           panel.style.display = "block";
@@ -73,14 +73,16 @@ window.__ModuleLoader__.load({
       }
 
       function refresh() {
+        if (disposed) return;
         panel.innerHTML = "<div style='opacity:.6;padding:8px'>加载中…</div>";
         fetch("/retro/api", { headers: { accept: "application/json" } })
           .then(function (res) {
             if (!res.ok) throw new Error("HTTP " + res.status);
             return res.json();
           })
-          .then(function (data) { panel.innerHTML = render(data); })
+          .then(function (data) { if (!disposed) panel.innerHTML = render(data); })
           .catch(function (error) {
+            if (disposed) return;
             panel.innerHTML = "<div style='color:var(--dsw-alias-state-error-primary,#ef4444)'>面板数据不可用：" + esc(error.message || error) + "</div>";
           });
       }
@@ -88,7 +90,7 @@ window.__ModuleLoader__.load({
       function esc(v) {
         return String(v ?? "")
           .replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;")
-          .replaceAll('"', "&quot;");
+          .replaceAll('"', "&quot;").replaceAll("'", "&#39;");
       }
       function when(list, empty) {
         if (!list || list.length === 0) return "<div class='dsh-retro-empty'>" + empty + "</div>";
@@ -151,6 +153,7 @@ window.__ModuleLoader__.load({
       document.body.appendChild(toast);
       var toastTimer = null;
       function showToast(text) {
+        if (disposed) return;
         toast.textContent = text;
         toast.classList.add("dsh-retro-toast-show");
         if (toastTimer !== null) clearTimeout(toastTimer);
@@ -190,13 +193,16 @@ window.__ModuleLoader__.load({
       });
 
       function cleanup() {
+        disposed = true;
         if (pollTimer !== null) clearInterval(pollTimer);
         if (toastTimer !== null) clearTimeout(toastTimer);
         panel.remove();
         toast.remove();
+        // 只移除本次挂载创建的样式，保留其他实例已有的节点。
+        if (style) style.remove();
       }
 
-      // Native sidebar mount (sidebar.footer.action) with floating-button fallback.
+      // 优先挂载到 sidebar.footer.action；注册失败时降级为浮动按钮。
       var slots = ctx.get("slots");
       var mounted = false;
       if (slots && typeof slots.inject === "function") {

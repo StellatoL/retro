@@ -1,4 +1,4 @@
-// dsh-retro: report rendering tests.
+// 静态 HTML 报告渲染测试。
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
@@ -32,16 +32,16 @@ test("renderReport produces a complete self-contained dashboard", () => {
   assert.ok(html.includes("进化提案"));
   assert.ok(html.includes("发布队列"));
   assert.ok(html.includes("最近审计"));
-  // data present
+  // 报告应包含各类状态数据。
   assert.ok(html.includes("复盘 A"));
   assert.ok(html.includes("复盘 B"));
   assert.ok(html.includes("经验 1"));
   assert.ok(html.includes("prop-1"));
   assert.ok(html.includes("post-1"));
   assert.ok(html.includes("rc-1.md"));
-  // counts
+  // 统计数量
   assert.ok(html.includes('>2<'));
-  // no unescaped raw object text
+  // 不应出现对象被直接转为字符串的占位文本。
   assert.ok(!html.includes("[object Object]"));
   rmSync(dir, { recursive: true, force: true });
 });
@@ -54,4 +54,13 @@ test("renderReport handles an empty store", () => {
   assert.ok(html.includes("暂无经验条目"));
   assert.ok(html.includes("暂无进化提案"));
   rmSync(dir, { recursive: true, force: true });
+});
+
+test("报告转义存储数据中的动态状态", (t) => {
+  const { dir, store } = seededStore();
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  store.addCard({ title: "状态转义", status: "<img src=x onerror=alert(1)>" });
+  const html = renderReport(store);
+  assert.ok(!html.includes("<img src=x"));
+  assert.ok(html.includes("&lt;img src=x"));
 });

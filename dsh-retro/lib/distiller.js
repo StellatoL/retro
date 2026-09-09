@@ -1,5 +1,5 @@
-// dsh-retro: distiller — turns session event logs into structured retro cards
-// and weekly digests via ctx.llm (map-reduce over long transcripts).
+// 提炼器：通过 ctx.llm 将会话事件转为复盘卡片和周报，
+// 长会话先分段总结，再合并提炼。
 import { BlockAssembler, createUserMessage } from "@deepseek-ai/dsh-llm";
 import { clip, textOf, cleanTitle } from "./util.js";
 export { cleanTitle } from "./util.js";
@@ -34,12 +34,12 @@ const WEEKLY_SYSTEM = `你是周报编辑。基于本周各会话的摘要与统
    ## 下周重点建议
 4. 最后输出 "## 进化建议"，基于本周内容给出 1-3 条"沉淀为技能/永久经验"的建议（例如：把某个反复出现的坑写进 retro-writing 技能）。`;
 
-/** One LLM text completion via ctx.llm; system instructions are embedded in the user prompt. */
+/** 通过 ctx.llm 完成一次文本生成，将任务约束与输入放在同一提示中。 */
 export async function complete(ctx, cfg, prompt, { signal, system } = {}) {
+  signal?.throwIfAborted();
   const messages = [
     createUserMessage({
-      // The harness message shape requires content as a BLOCKS array
-      // (the DeepSeek adapter flattens `message.content.filter(...)`).
+      // DSH 消息的 content 必须是内容块数组，供模型适配器过滤与转换。
       content: [{ type: "text", text: [system, prompt].filter(Boolean).join("\n\n") }],
       source: { kind: "user", agent: "dsh-retro" }
     })
@@ -56,6 +56,7 @@ export async function complete(ctx, cfg, prompt, { signal, system } = {}) {
     assembler.push(chunk);
     signal?.throwIfAborted();
   }
+  signal?.throwIfAborted();
   const finish = assembler.finish;
   if (finish.kind === "error" || finish.kind === "aborted") {
     const failure = finish.failure ?? {};
@@ -68,7 +69,7 @@ export async function complete(ctx, cfg, prompt, { signal, system } = {}) {
     .trim();
 }
 
-/** Build a transcript from one session's events (cheap heuristics, no LLM). */
+/** 从会话事件构造文本记录，仅做规则提取，不调用模型。 */
 export function buildTranscript(events, toolNames = new Map()) {
   const lines = [];
   const push = (prefix, text) => {
@@ -100,7 +101,7 @@ export function buildTranscript(events, toolNames = new Map()) {
           const isError = data.error !== undefined || block?.isError === true;
           if (isError) {
             const callId = data.message?.source?.callId ?? block?.toolCallId ?? null;
-            const name = (typeof callId === "string" && toolNames.get(callId)) ?? "tool";
+            const name = (typeof callId === "string" ? toolNames.get(callId) : undefined) ?? "tool";
             const code = data.error?.code ?? data.error?.name ?? null;
             const text = typeof block?.content?.[0]?.text === "string" ? block.content[0].text : "";
             push("工具失败:", `${name}${code ? ` [${code}]` : ""} ${clip(text || "", 300)}`);
@@ -119,15 +120,17 @@ export function buildTranscript(events, toolNames = new Map()) {
           break;
       }
     } catch {
-      // Skip malformed events; never break the pipeline.
+      // 跳过格式不完整的事件，继续处理其余记录。
     }
   }
   return lines.join("\n");
 }
 
-/** Distill one session into a retro card markdown (map-reduce when long). */
+/** 将单个会话提炼为复盘 Markdown，长文本分段后汇总。 */
 export async function distillSession(ctx, cfg, sessionId, { signal } = {}) {
+  signal?.throwIfAborted();
   const { events } = await ctx.sessionQuery.readSession(sessionId);
+  signal?.throwIfAborted();
   const transcript = buildTranscript(events);
   if (!transcript.trim()) {
     return { title: null, markdown: "（该会话没有可提炼的内容：无消息、无工具调用、无目标事件）" };
@@ -138,7 +141,7 @@ export async function distillSession(ctx, cfg, sessionId, { signal } = {}) {
   return { title, markdown };
 }
 
-/** Distill a set of sessions into a weekly digest markdown. */
+/** 将多个会话汇总为周报 Markdown。 */
 export async function distillWeekly(ctx, cfg, summaries, pending, { signal } = {}) {
   const digestInput = [
     "本周会话摘要：",
@@ -154,9 +157,9 @@ export async function distillWeekly(ctx, cfg, summaries, pending, { signal } = {
 }
 
 /**
- * Extract the "## 进化建议" section from a weekly card into plain list items.
- * Supports "- "/"* " bullets and numbered lists ("1. ", "1、", "1)").
- * Pure function (testable, no LLM).
+ * 从周报的“进化建议”章节提取列表条目。
+ * 支持短横线、星号，以及 1.、1、或 1) 等编号形式。
+ * 纯文本解析，不调用模型。
  */
 export function extractEvolutionSuggestions(markdown) {
   const lines = String(markdown ?? "").split(/\r?\n/);
@@ -178,10 +181,8 @@ export function extractEvolutionSuggestions(markdown) {
 }
 
 /**
- * Turn weekly evolution suggestions into structured proposals:
- * [{ kind: 'skill'|'agents', title, content, reason }].
- * One LLM call for the whole batch; falls back to plain entries on failure
- * (the caller decides whether to keep them).
+ * 将周报进化建议转为含 kind、title、content、reason 的结构化提案。
+ * 每批调用模型一次；生成或解析失败时保留建议原文，供调用方处理。
  */
 export async function distillProposals(ctx, cfg, suggestions, { signal } = {}) {
   if (!suggestions || suggestions.length === 0) return [];
@@ -214,6 +215,9 @@ export async function distillProposals(ctx, cfg, suggestions, { signal } = {}) {
 }
 
 async function reduceTranscript(ctx, cfg, transcript, { signal }) {
+  for (const key of ["distillMaxChars", "chunkChars"]) {
+    if (!Number.isInteger(cfg[key]) || cfg[key] <= 0) throw new Error(`${key} 必须为正整数`);
+  }
   if (transcript.length <= cfg.distillMaxChars) return transcript;
   const chunks = [];
   for (let i = 0; i < transcript.length; i += cfg.chunkChars) {

@@ -1,12 +1,6 @@
-// dsh-retro: client bundle smoke — execute the bundle in a mocked browser
-// environment and verify BOTH mount paths (sidebar slot + floating fallback).
-import { readFileSync } from "node:fs";
-import path from "node:path";
-import { pathToFileURL } from "node:url";
+// 在模拟浏览器中加载客户端，验证侧边栏与浮动按钮两种入口。
 
-const clientSource = readFileSync(new URL("../lib/client.js", import.meta.url), "utf8");
-
-// ---- browser mocks ----
+// 浏览器环境替身
 function makeElement(tag) {
   const el = {
     tagName: tag,
@@ -41,6 +35,7 @@ globalThis.document = {
   execCommand() { return true; }
 };
 let fetchCalls = 0;
+let notePath = "Index/06_Retro/_retro/rc-1.md";
 globalThis.fetch = async () => {
   fetchCalls++;
   return {
@@ -49,7 +44,7 @@ globalThis.fetch = async () => {
       vaultName: "Obsidian_Stw",
       stats: { cards: 3, draftedCards: 1 },
       queue: {
-        cards: [{ id: "rc-1", title: "草稿卡", note: "Index/06_Retro/_retro/rc-1.md" }],
+        cards: [{ id: "rc-1", title: "草稿卡", note: notePath }],
         entries: [],
         proposals: []
       },
@@ -65,7 +60,7 @@ Object.defineProperty(globalThis, "navigator", {
   configurable: true
 });
 
-// capture the module definition
+// 捕获客户端模块定义。
 let capturedDef = null;
 globalThis.window = {
   __ModuleLoader__: {
@@ -73,10 +68,10 @@ globalThis.window = {
   },
   open(url) { openedUrl = url; return null; }
 };
-await import(pathToFileURL(path.join(process.cwd(), "lib", "client.js")).href);
+await import(new URL("../lib/client.js", import.meta.url));
 if (!capturedDef) throw new Error("client bundle did not call __ModuleLoader__.load");
 
-// react mock
+// React 渲染替身
 const reactMock = {
   createElement(type, props, ...children) { return { type, props: props ?? {}, children }; }
 };
@@ -91,7 +86,7 @@ function check(cond, msg) {
   else console.log("ok:", msg);
 }
 
-// ---- path 1: sidebar slot ----
+// 场景一：侧边栏插槽
 {
   created.length = 0;
   let injectedHole = null;
@@ -114,20 +109,20 @@ function check(cond, msg) {
     const el = registered.comp({ wide: false });
     check(el && el.type === "button", "组件渲染 <button>");
     check(el.props.className === "dsh-retro-sidebar-btn", "按钮使用侧边栏样式类");
-    // click toggles panel
+    // 点击按钮切换面板开关。
     el.props.onClick();
     check(created.some((e) => e.className === "dsh-retro-panel" && e.style.display === "block"), "点击打开面板");
     el.props.onClick();
     check(created.some((e) => e.className === "dsh-retro-panel" && e.style.display === "none"), "再次点击关闭面板");
   }
   check(typeof registerDisposer === "function", "register 返回 disposer");
-  // no fab in sidebar mode
+  // 侧边栏模式下不再创建浮动按钮。
   check(!created.some((e) => e.className === "dsh-retro-fab"), "侧边栏模式下无浮动按钮");
   check(typeof ctx._disposer === "function", "effect disposer 已注册");
   if (typeof ctx._disposer === "function") { ctx._disposer(); check(true, "disposer 可调用"); }
 }
 
-// ---- path 2: floating fallback ----
+// 场景二：浮动按钮降级入口
 {
   created.length = 0;
   const ctx = {
@@ -141,9 +136,10 @@ function check(cond, msg) {
     fab.listeners.click[0]();
     check(created.some((e) => e.className === "dsh-retro-panel" && e.style.display === "block"), "浮动按钮打开面板");
   }
+  ctx._disposer();
 }
 
-// ---- path 3: panel interactions (copy command / open in Obsidian) ----
+// 场景三：复制命令与打开 Obsidian
 {
   created.length = 0;
   copiedText = null;
@@ -163,7 +159,7 @@ function check(cond, msg) {
   const btnEl = slotsMock._registered.comp({ wide: false });
   btnEl.props.onClick();
   const panelEl = created.find((e) => e.className === "dsh-retro-panel");
-  await new Promise((r) => setTimeout(r, 10)); // let fetch .then run
+  await new Promise((r) => setTimeout(r, 10)); // 等待请求回调更新面板。
   check(fetchCalls >= 1, "面板打开时请求 /retro/api");
   check(panelEl.innerHTML.includes("data-copy='/retro review rc-1 keep'"), "卡片行携带复制命令");
   check(panelEl.innerHTML.includes("data-open='Index/06_Retro/_retro/rc-1.md'"), "卡片行携带 Obsidian 打开路径");
@@ -192,6 +188,20 @@ function check(cond, msg) {
   if (typeof ctx._disposer === "function") ctx._disposer();
 }
 
-if (failures > 0) { console.error(failures + " failures"); process.exit(1); }
+// 含单引号的文件名也必须保持为完整属性值，不能插入额外 HTML 属性。
+{
+  created.length = 0;
+  notePath = "Index/_retro/quote'onmouseover='alert(1).md";
+  const ctx = { get() {}, effect(fn) { this.dispose = fn(); } };
+  factoryExports.apply(ctx);
+  const fab = created.find((el) => el.className === "dsh-retro-fab");
+  fab.listeners.click[0]();
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  const panel = created.find((el) => el.className === "dsh-retro-panel");
+  check(panel.innerHTML.includes("quote&#39;onmouseover=&#39;alert(1).md"), "属性中的单引号经过转义");
+  ctx.dispose();
+  check(created.every((el) => el.removed), "卸载后移除面板、按钮、提示和样式");
+}
+
+if (failures > 0) throw new Error(`${failures} 项客户端检查失败`);
 console.log("client bundle smoke: ALL PASS");
-process.exit(0); // poll timers keep the event loop alive

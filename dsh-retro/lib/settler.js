@@ -1,37 +1,41 @@
-// dsh-retro: settler — staging writes (whitelisted), template rendering,
-// and the human-confirmed settle/discard flow. Host-side node:fs only.
+// 沉淀层：通过白名单写暂存文件、渲染模板，并处理人工确认的落库或丢弃。
+// 所有文件操作均在宿主侧执行。
 import path from "node:path";
 import { mkdirSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { atomicWrite, loadTemplate, renderTemplater, safeJoin, fallbackTemplate, nowStamp, stampNow, uniqueFileName, slugify, readOptional, cleanTitle, clip } from "./util.js";
 
-/** Absolute staging dir (vault/stagingDir). */
+/** 返回知识库内经过校验的卡片暂存目录绝对路径。 */
 export function stagingRoot(cfg) {
-  return path.join(cfg.vaultPath, cfg.stagingDir);
+  requireVault(cfg);
+  return safeJoin(cfg.vaultPath, cfg.stagingDir);
 }
 
-/** Absolute experience root (vault/experienceRoot). */
+/** 返回知识库内经过校验的经验库绝对路径。 */
 export function experienceRoot(cfg) {
-  return path.join(cfg.vaultPath, cfg.experienceRoot);
+  requireVault(cfg);
+  return safeJoin(cfg.vaultPath, cfg.experienceRoot);
 }
 
-/** Absolute proposals dir (vault/proposalsDir). */
+/** 返回知识库内经过校验的提案目录绝对路径。 */
 export function proposalsRoot(cfg) {
-  return path.join(cfg.vaultPath, cfg.proposalsDir ?? "Index/06_Retro/_proposals");
+  requireVault(cfg);
+  return safeJoin(cfg.vaultPath, cfg.proposalsDir ?? "Index/06_Retro/_proposals");
 }
 
-/** Absolute entries dir (vault/entriesDir). */
+/** 返回知识库内经过校验的条目草稿目录绝对路径。 */
 export function entriesRoot(cfg) {
-  return path.join(cfg.vaultPath, cfg.entriesDir ?? "Index/06_Retro/_entries");
+  requireVault(cfg);
+  return safeJoin(cfg.vaultPath, cfg.entriesDir ?? "Index/06_Retro/_entries");
 }
 
-/** Fail loudly when no vault is configured (never fall back to cwd-relative writes). */
+/** 知识库未配置时直接报错，避免写入当前工作目录。 */
 function requireVault(cfg) {
-  if (!cfg.vaultPath) throw new Error("vaultPath 未配置：运行 /retro config vaultPath <路径> 或设置环境变量 DSH_RETRO_VAULT");
+  if (typeof cfg.vaultPath !== "string" || !cfg.vaultPath.trim()) throw new Error("vaultPath 未配置：运行 /retro config vaultPath <路径> 或设置环境变量 DSH_RETRO_VAULT");
 }
 
 /**
- * Route a plugin-owned relative path to its root: `_entries/…` → entriesRoot,
- * `_proposals/…` → proposalsRoot, everything else → stagingRoot.
+ * 将 _entries/ 和 _proposals/ 前缀分别路由到条目与提案根目录，
+ * 其他相对路径路由到卡片暂存区。
  */
 export function ownedRootFor(cfg, relPath) {
   if (relPath.startsWith("_entries/")) return entriesRoot(cfg);
@@ -39,19 +43,16 @@ export function ownedRootFor(cfg, relPath) {
   return stagingRoot(cfg);
 }
 
-/** Ensure all plugin-owned vault dirs exist (host-side mkdir). */
+/** 创建插件在知识库中使用的目录。 */
 export function ensureDirs(cfg) {
   if (!cfg.vaultPath) return;
-  mkdirSync(stagingRoot(cfg), { recursive: true });
-  mkdirSync(proposalsRoot(cfg), { recursive: true });
-  mkdirSync(entriesRoot(cfg), { recursive: true });
-  mkdirSync(experienceRoot(cfg), { recursive: true });
+  const roots = [stagingRoot(cfg), proposalsRoot(cfg), entriesRoot(cfg), experienceRoot(cfg)];
+  for (const root of roots) mkdirSync(root, { recursive: true });
 }
 
 /**
- * Write a file under a plugin-owned root (staging/proposals/entries).
- * THE ONLY automatic write target: rejects any path that escapes its root,
- * or touches .obsidian/.git/.trash.
+ * 在插件的卡片、提案或条目暂存根目录下写入文件。
+ * 拒绝越出相应根目录以及访问 .obsidian、.git、.trash。
  */
 export function writeStaging(cfg, relPath, content, { store, actor = "retro" } = {}) {
   requireVault(cfg);
@@ -62,7 +63,7 @@ export function writeStaging(cfg, relPath, content, { store, actor = "retro" } =
   return target;
 }
 
-/** Read a file under a plugin-owned root (same whitelist). */
+/** 按相同路径限制读取插件暂存文件。 */
 export function readStaging(cfg, relPath) {
   requireVault(cfg);
   const root = ownedRootFor(cfg, relPath);
@@ -72,7 +73,7 @@ export function readStaging(cfg, relPath) {
   return text;
 }
 
-/** Render one of the user's vault templates (or built-in fallback) with Templater materialized. */
+/** 渲染知识库模板或内置模板，替换支持的 Templater 表达式。 */
 export function renderCardTemplate(cfg, kind, vars) {
   const template = loadTemplate(cfg, kind, fallbackTemplate(kind));
   const { text, warnings } = renderTemplater(template, vars);
@@ -82,14 +83,13 @@ export function renderCardTemplate(cfg, kind, vars) {
   return text;
 }
 
-/** Replace the "{{title}}" placeholder with the concrete title. */
+/** 将模板中的 {{title}} 占位符替换为具体标题。 */
 function fillTitle(text, title) {
   return text.replaceAll("{{title}}", title ?? "未命名复盘");
 }
 
 /**
- * Materialize a drafted retro card into the staging dir as ONE reviewable file:
- * rendered template + distilled markdown + "待确认问题" section.
+ * 将渲染后的模板、提炼正文和待确认问题合并成一个文件，供用户审阅。
  */
 export function draftCardFiles(cfg, store, card, { markdown, questions = [], templateKind = "experience", actor = "command" }) {
   const warnings = [];
@@ -131,7 +131,7 @@ export function draftCardFiles(cfg, store, card, { markdown, questions = [], tem
   return { relPath, target, warnings };
 }
 
-/** Valid final directories for settled notes (relative to vault). */
+/** 返回允许落库的知识库相对目录。 */
 function resolveSettleDir(cfg, dir) {
   const allowed = cfg.settleDirs ?? ["Index/03_Full_Notes/04_Retro", "Index/04_Projects"];
   const candidate = dir ?? allowed[0];
@@ -142,8 +142,8 @@ function resolveSettleDir(cfg, dir) {
 }
 
 /**
- * Human-confirmed settle: read the (possibly user-edited) staging file,
- * render the final note into the chosen formal directory, update the store.
+ * 人工确认后读取用户可能已编辑的暂存文件，
+ * 将正式笔记写入选定的允许目录，并更新状态。
  */
 export function settleCard(cfg, store, card, { action, dir, note = null, actor = "command" }) {
   if (action === "discard") {
@@ -160,11 +160,11 @@ export function settleCard(cfg, store, card, { action, dir, note = null, actor =
     return {
       ok: true,
       status: "reviewing",
-      message: `已记录修订意见。请在 Obsidian 中修改暂存文件（${card.stagingPath}），或让我重新生成：/retro draft session:${card.sessionIds?.[0] ?? "?"}`
+      message: `已记录修订意见。请在 Obsidian 中修改暂存文件（${card.stagingPath}），完成后运行 /retro review ${card.id} keep。`
     };
   }
 
-  // keep (default)
+  // 默认按 keep 确认落库。
   if (!card.stagingPath) throw new Error(`卡片 ${card.id} 没有暂存文件`);
   const stagedText = readStaging(cfg, card.stagingPath);
   const parsed = splitCardFile(stagedText);
@@ -198,13 +198,13 @@ export function settleCard(cfg, store, card, { action, dir, note = null, actor =
   };
 }
 
-/** Strip the "待确认问题" review section (everything after the separator `---`). */
+/** 移除分隔线后的“待确认问题”审阅章节。 */
 export function stripQuestionsSection(body) {
   const lines = body.split(/\r?\n/);
   let separatorIndex = -1;
   for (let i = 0; i < lines.length; i++) {
     if (!/^---\s*$/.test(lines[i])) continue;
-    // The heading may follow the separator directly or after a blank line.
+    // 标题可能紧跟分隔线，也可能与分隔线之间留有空行。
     const next = lines.slice(i + 1, i + 3).join(" ");
     if (next.includes("待确认问题")) {
       separatorIndex = i;
@@ -214,7 +214,7 @@ export function stripQuestionsSection(body) {
   return separatorIndex >= 0 ? lines.slice(0, separatorIndex).join("\n").trim() : body.trim();
 }
 
-/** Split markdown into preamble + level-2 sections. */
+/** 将 Markdown 拆分为前导内容与各二级标题章节。 */
 function splitSections(md) {
   const lines = md.split(/\r?\n/);
   const sections = [];
@@ -233,9 +233,8 @@ function splitSections(md) {
 }
 
 /**
- * Merge a card body into the user's template: keep the template's preamble
- * (frontmatter + # title), then for each template section use the card's
- * matching section content when non-empty, and append card-only sections.
+ * 合并卡片正文与用户模板：保留模板前导内容与标题，
+ * 同名章节优先采用卡片的非空内容，再追加模板中没有的章节。
  */
 export function mergeIntoTemplate(template, title, cardBody) {
   const sections = splitSections(template);
@@ -250,7 +249,7 @@ export function mergeIntoTemplate(template, title, cardBody) {
   const safeTitle = cleanTitle(title);
   for (const section of sections) {
     if (section.heading === null) {
-      // preamble: materialize the title placeholder, keep the rest
+      // 替换前导内容中的标题占位符，保留其余内容。
       const preamble = section.content.join("\n").replaceAll("{{title}}", safeTitle).trimEnd();
       if (first) {
         out.push(preamble);
@@ -270,7 +269,7 @@ export function mergeIntoTemplate(template, title, cardBody) {
     out.push(content && content.length > 0 ? content : "");
     out.push("");
   }
-  // Append card sections that the template doesn't have.
+  // 追加卡片中独有的章节。
   for (const s of bodySections) {
     if (!s.heading) continue;
     const known = sections.some((t) => t.heading && normalizeHeading(t.heading) === normalizeHeading(s.heading));
@@ -289,9 +288,9 @@ function normalizeHeading(heading) {
 }
 
 /**
- * Extract experience-entry fields from a (user-reviewed) card body by section:
+ * 按章节从用户审阅后的卡片提取经验条目字段：
  * 项目目标 → use；关键经验 → model；关键过程 → example；踩坑与根因 → pitfalls；参考链接 → links。
- * Pure function (testable); falls back to empty strings/lists when a section is missing.
+ * 纯文本转换；缺少章节时返回空字符串或空列表。
  */
 export function extractEntryFromCard(body) {
   const sections = splitSections(String(body ?? ""));
@@ -314,7 +313,7 @@ export function extractEntryFromCard(body) {
   return { use, model, example, pitfalls, links };
 }
 
-/** Split a drafted card file into { title, body } (frontmatter stripped). */
+/** 移除 frontmatter 后，将卡片文件拆分为 title 与 body。 */
 export function splitCardFile(text) {
   const m = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/.exec(text);
   if (!m) return { title: null, body: text };
@@ -322,7 +321,7 @@ export function splitCardFile(text) {
   return { title, body: m[2].trim() };
 }
 
-/** Create the experience-entry draft (permanent-note style) in staging/_entries. */
+/** 在配置的条目暂存区创建永久笔记格式的经验草稿。 */
 export function draftEntryFile(cfg, store, entry, { actor = "command" } = {}) {
   const warnings = [];
   const safeTitle = cleanTitle(entry.title || "未命名经验");
@@ -348,7 +347,7 @@ export function draftEntryFile(cfg, store, entry, { actor = "command" } = {}) {
     ...(entry.links ?? []).map((l) => `- ${l}`),
     ""
   ].join("\n");
-  // Drop the template's own H1 heading (e.g. "结论一句话") so only the entry title remains.
+  // 移除模板自带的一级标题，仅保留经验条目的实际标题。
   const templateWithoutHeading = template.replace(/^#\s+.+$/m, "").trimEnd();
   const content = `${templateWithoutHeading}\n\n${body}`;
   const fileName = uniqueFileName(entriesRoot(cfg), `${stampNow()}-${slugify(safeTitle)}`);
@@ -358,7 +357,7 @@ export function draftEntryFile(cfg, store, entry, { actor = "command" } = {}) {
   return { relPath, target, warnings };
 }
 
-/** Confirm an experience entry: write the permanent note into experienceRoot. */
+/** 确认经验条目后，将永久笔记写入 experienceRoot。 */
 export function settleEntry(cfg, store, entry, { actor = "command" } = {}) {
   const safeTitle = cleanTitle(entry.title || "未命名经验");
   const text = entry.draftPath ? readStaging(cfg, entry.draftPath) : `# ${safeTitle}\n\n${entry.model ?? ""}`;
@@ -373,14 +372,25 @@ export function settleEntry(cfg, store, entry, { actor = "command" } = {}) {
   return { ok: true, path: finalRel };
 }
 
-/** Read a note from the vault (whitelisted dirs only). */
+/** 仅从只读白名单允许的知识库目录读取笔记。 */
 export function readVaultNote(cfg, relPath) {
+  requireVault(cfg);
   const whitelist = cfg.readWhitelist ?? [];
-  const top = relPath.split(/[\\/]/)[0];
-  if (!whitelist.includes(top)) {
+  const target = safeJoin(cfg.vaultPath, relPath);
+  const allowed = whitelist.some((dir) => {
+    const root = safeJoin(cfg.vaultPath, dir);
+    const relative = path.relative(root, target);
+    if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) return false;
+    try {
+      safeJoin(root, relative);
+      return true;
+    } catch {
+      return false;
+    }
+  });
+  if (!allowed) {
     throw new Error(`路径 "${relPath}" 不在只读白名单（${whitelist.join(", ")}）中`);
   }
-  const target = safeJoin(cfg.vaultPath, relPath);
   const text = readOptional(target);
   if (text === undefined) throw new Error(`笔记不存在：${relPath}`);
   return text;

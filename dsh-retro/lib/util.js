@@ -1,8 +1,8 @@
-// dsh-retro: shared utilities (no external dependencies).
-import { mkdirSync, writeFileSync, renameSync, existsSync, readFileSync } from "node:fs";
+// 公共工具：仅依赖 Node 内置模块。
+import { mkdirSync, writeFileSync, renameSync, existsSync, readFileSync, lstatSync, realpathSync, rmSync } from "node:fs";
 import path from "node:path";
 
-/** Atomic file write: temp file + rename (survives partial writes). */
+/** 先写临时文件，再重命名替换目标，避免直接写出半截内容。 */
 export function atomicWrite(filePath, content) {
   mkdirSync(path.dirname(filePath), { recursive: true });
   const tmp = `${filePath}.${process.pid}.${Date.now()}.tmp`;
@@ -10,12 +10,16 @@ export function atomicWrite(filePath, content) {
   try {
     renameSync(tmp, filePath);
   } catch (error) {
-    try { renameSync(tmp, filePath); } catch { /* Windows retry */ }
-    throw error;
+    try {
+      renameSync(tmp, filePath);
+    } catch {
+      rmSync(tmp, { force: true });
+      throw error;
+    }
   }
 }
 
-/** Read a file, returning `undefined` when missing. */
+/** 尝试读取文件，缺失或无法读取时返回 undefined。 */
 export function readOptional(filePath) {
   try {
     return readFileSync(filePath, "utf8");
@@ -24,23 +28,58 @@ export function readOptional(filePath) {
   }
 }
 
-/** Join a relative path under a root, rejecting traversal, hidden tool dirs, and absolute paths. */
+/** 将相对路径限制在指定根目录内，拒绝越界、受保护目录和绝对路径。 */
 export function safeJoin(root, rel) {
-  if (typeof rel !== "string" || rel.length === 0) throw new Error("retro: empty relative path");
+  if (typeof root !== "string" || !root.trim()) throw new Error("retro: 根目录未配置");
+  if (typeof rel !== "string" || !rel.trim()) throw new Error("retro: 相对路径不能为空");
+  if (path.posix.isAbsolute(rel) || path.win32.isAbsolute(rel) || /^[a-z]:/i.test(rel)) {
+    throw new Error(`retro: 必须使用相对路径（${rel}）`);
+  }
+  const normalized = rel.split(/[\\/]/).join(path.sep);
   const rootResolved = path.resolve(root);
-  const candidate = path.resolve(rootResolved, rel);
+  const candidate = path.resolve(rootResolved, normalized);
   const relCheck = path.relative(rootResolved, candidate);
-  if (relCheck === "" ) throw new Error(`retro: refusing to write the root directory itself (${rel})`);
-  if (relCheck.startsWith("..") || path.isAbsolute(relCheck)) throw new Error(`retro: path escapes ${root} (${rel})`);
-  for (const seg of rel.split(/[\\/]/)) {
-    if (seg === ".obsidian" || seg === ".git" || seg === ".trash") {
-      throw new Error(`retro: refusing to touch protected directory "${seg}"`);
+  if (relCheck === "") throw new Error(`retro: 不能把根目录本身作为文件目标（${rel}）`);
+  if (outsideRoot(relCheck)) throw new Error(`retro: 路径越出允许目录 ${root}（${rel}）`);
+  for (const seg of normalized.split(path.sep)) {
+    if ([".obsidian", ".git", ".trash"].includes(seg.toLowerCase().replace(/[. ]+$/, ""))) {
+      throw new Error(`retro: 不能访问受保护目录 "${seg}"`);
     }
+  }
+  // 检查已存在的目录链接；尚未创建的末级路径按其真实父目录计算。
+  const realRoot = resolveExistingPath(rootResolved);
+  const realTarget = resolveExistingPath(candidate);
+  const actualRelative = path.relative(realRoot, realTarget);
+  if (!actualRelative || outsideRoot(actualRelative)) throw new Error(`retro: 目录链接使路径越出允许目录（${rel}）`);
+  if (actualRelative.split(path.sep).some((seg) => [".obsidian", ".git", ".trash"].includes(seg.toLowerCase().replace(/[. ]+$/, "")))) {
+    throw new Error(`retro: 目录链接指向受保护目录（${rel}）`);
   }
   return candidate;
 }
 
-/** Slugify a title for file names: keeps CJK, lowercases latin, dashes for separators. */
+function outsideRoot(relative) {
+  return relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative);
+}
+
+function resolveExistingPath(file) {
+  let current = file;
+  const missing = [];
+  while (true) {
+    try {
+      lstatSync(current);
+      break;
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+      const parent = path.dirname(current);
+      if (parent === current) throw error;
+      missing.unshift(path.basename(current));
+      current = parent;
+    }
+  }
+  return path.join(realpathSync.native(current), ...missing);
+}
+
+/** 生成文件名主题：保留中日韩文字，拉丁字母小写，分隔符改为连字符。 */
 export function slugify(text, max = 60) {
   const s = String(text ?? "")
     .trim()
@@ -50,21 +89,21 @@ export function slugify(text, max = 60) {
   return s.slice(0, max) || "untitled";
 }
 
-/** Local date stamp YYYY-MM-DD. */
+/** 按本地时区生成 YYYY-MM-DD 日期。 */
 export function todayStamp() {
   const d = new Date();
   const p = (n) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 }
 
-/** Local datetime stamp YYYY-MM-DD HH:mm. */
+/** 按本地时区生成 YYYY-MM-DD HH:mm 时间。 */
 export function nowStamp() {
   const d = new Date();
   const p = (n) => String(n).padStart(2, "0");
   return `${todayStamp()} ${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 
-/** File-name-safe stamp: YYYY-MM-DD-HHmm (no colons — Windows-safe). */
+/** 生成可用于 Windows 文件名的 YYYY-MM-DD-HHmm 时间戳，不含冒号。 */
 export function stampNow() {
   const d = new Date();
   const p = (n) => String(n).padStart(2, "0");
@@ -72,8 +111,7 @@ export function stampNow() {
 }
 
 /**
- * Pick a unique `<base>.md` file name inside `dir`: appends `-2`, `-3`, …
- * when the name is taken (never overwrites).
+ * 在目录内选择未占用的 Markdown 文件名；重名时依次追加 -2、-3 等序号。
  */
 export function uniqueFileName(dir, base) {
   let name = base;
@@ -84,17 +122,17 @@ export function uniqueFileName(dir, base) {
   return `${name}.md`;
 }
 
-/** ISO date (date only) for blog frontmatter. */
+/** 生成博客 frontmatter 使用的 ISO 日期部分。 */
 export function isoDate(date = new Date()) {
   return date.toISOString().slice(0, 10);
 }
 
-/** Short random id suffix. */
+/** 生成短随机标识后缀。 */
 export function shortId(len = 5) {
   return Math.random().toString(36).slice(2, 2 + len);
 }
 
-/** Extract text from a harness message: string content or content blocks. */
+/** 从 DSH 消息的字符串或内容块中提取文本。 */
 export function textOf(message) {
   if (message == null) return "";
   const content = message.content ?? message;
@@ -120,7 +158,7 @@ export function textOf(message) {
   return String(content ?? "");
 }
 
-/** Normalize a title: strip leading "#" marks and stray markdown decorations. */
+/** 清理标题开头的井号及多余 Markdown 修饰符。 */
 export function cleanTitle(text) {
   return String(text ?? "")
     .replace(/^#{1,6}\s*/, "")
@@ -128,7 +166,7 @@ export function cleanTitle(text) {
     .trim();
 }
 
-/** Parse a markdown file's frontmatter (minimal YAML subset: strings, numbers, booleans, string arrays). */
+/** 解析 frontmatter 的有限 YAML 子集：字符串、数字、布尔值与字符串数组。 */
 export function parseFrontmatter(text) {
   const m = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/.exec(text);
   if (!m) return { data: {}, body: text };
@@ -177,7 +215,7 @@ function scalar(value) {
   return unquote(value);
 }
 
-/** Render a minimal YAML frontmatter block (values: string/number/boolean/array). */
+/** 将字符串、数字、布尔值或数组渲染为简单 YAML frontmatter。 */
 export function renderFrontmatter(entries) {
   const lines = ["---"];
   for (const [key, value] of entries) {
@@ -203,7 +241,7 @@ function yamlString(value) {
   return JSON.stringify(s);
 }
 
-/** Strip Templater syntax from a rendered template; returns { text, warnings }. */
+/** 替换支持的 Templater 表达式，移除其他表达式并返回警告列表。 */
 export function renderTemplater(text, vars = {}) {
   const warnings = [];
   const replaced = text.replace(/<%([\s\S]*?)%>/g, (full, expr) => {
@@ -219,7 +257,7 @@ export function renderTemplater(text, vars = {}) {
   return { text: replaced, warnings };
 }
 
-/** Read a markdown template relative to vaultPath; fallback content when missing. */
+/** 从知识库相对路径读取模板，缺失或无法访问时使用内置内容。 */
 export function loadTemplate(cfg, templateKey, fallbackText) {
   const rel = cfg.templates?.[templateKey];
   if (rel) {
@@ -227,12 +265,12 @@ export function loadTemplate(cfg, templateKey, fallbackText) {
       const abs = safeJoin(cfg.vaultPath, rel);
       const text = readOptional(abs);
       if (text !== undefined) return text;
-    } catch { /* fall through */ }
+    } catch { /* 路径不可用时继续使用内置模板 */ }
   }
   return fallbackText;
 }
 
-/** Build the fallback (built-in) templates when the vault template is missing. */
+/** 返回知识库模板缺失时使用的内置模板。 */
 export function fallbackTemplate(kind) {
   if (kind === "experience") {
     return [
@@ -307,7 +345,7 @@ export function fallbackTemplate(kind) {
   return "";
 }
 
-/** Truncate long text with an explicit marker. */
+/** 截断过长文本，并附加明确的截断标记。 */
 export function clip(text, max) {
   const s = String(text ?? "");
   return s.length <= max ? s : `${s.slice(0, max)}\n…[截断]`;

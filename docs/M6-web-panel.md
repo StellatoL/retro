@@ -1,5 +1,7 @@
 # M6：Web 复盘面板（dsh-retro 客户端插件）— 规划与论证
 
+> 历史归档：本文保留 2026-08-17 的面板设计论证，不是当前安装指南。面板已经实现，当前模块、生命周期和已修复问题见 [当前架构](architecture.md) 与 [标准化记录](standardization.md)，安装见 [README](../README.md)。
+
 > 状态：2026-08-17 定稿；v2：入口升级为**侧边栏原生挂载**（`sidebar.footer.action` slot，React 按钮），
 > 浮动按钮保留为 slots 不可用时的降级路径。目标：在 DSH Web UI 内嵌实时复盘面板，
 > 以**原生客户端插件**形态交付（`dsh.client` 声明 + 运行时 bundle），零前端重建。

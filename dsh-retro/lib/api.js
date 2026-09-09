@@ -1,8 +1,7 @@
-// dsh-retro: web panel API — host-side data feed for the client plugin.
-// Pure rendering (testable) + optional webServer route registration.
+// 面板 API：生成状态快照，并按需注册宿主 HTTP 路由。
 import path from "node:path";
 
-/** Build the panel JSON snapshot from a RetroStore (pure, no I/O). */
+/** 从状态存储生成面板快照，不执行文件读写。 */
 export function renderPanelApi(store, cfg = {}) {
   const meta = store.getMeta();
   const cards = store.listCards();
@@ -12,7 +11,7 @@ export function renderPanelApi(store, cfg = {}) {
   const materials = store.listMaterials({ limit: 500 });
 
   // vault 相对路径（供客户端打开 Obsidian / 复制命令）
-  const cardNote = (c) => (c.vaultNote ? c.vaultNote : cfg.stagingDir ? `${cfg.stagingDir}/${c.stagingPath}` : c.stagingPath);
+  const cardNote = (c) => c.vaultNote || (c.stagingPath ? (cfg.stagingDir ? `${cfg.stagingDir}/${c.stagingPath}` : c.stagingPath) : null);
   const entryNote = (e) =>
     e.notePath ? e.notePath : cfg.entriesDir && e.draftPath ? `${cfg.entriesDir}/${String(e.draftPath).replace(/^_entries\//, "")}` : e.draftPath;
 
@@ -44,7 +43,7 @@ export function renderPanelApi(store, cfg = {}) {
     },
     recentApproved: cards
       .filter((c) => c.status === "approved" && c.vaultNote)
-      .slice(-5)
+      .slice(0, 5)
       .map((c) => ({ id: c.id, title: c.title, note: c.vaultNote })),
     recentAudit: store.listAudit(10).map((a) => ({
       ts: a.ts, actor: a.actor, action: a.action, target: a.target, ok: a.ok
@@ -53,8 +52,8 @@ export function renderPanelApi(store, cfg = {}) {
 }
 
 /**
- * Register `GET /retro/api` on the optional webServer service.
- * Returns the optional-injection fiber (dispose with the plugin lifecycle).
+ * 向可选的 webServer 服务注册只读路由。
+ * 返回可选依赖的注入实例，由插件生命周期负责释放。
  */
 export function registerPanelApi(ctx, store, cfg = {}) {
   const fiber = ctx.inject(["webServer"], (childCtx) => {
@@ -63,16 +62,16 @@ export function registerPanelApi(ctx, store, cfg = {}) {
       path: "/retro/api",
       handler: async (req, res) => {
         if (req.method !== "GET" && req.method !== "HEAD") {
-          res.writeHead(405);
+          res.writeHead(405, { allow: "GET, HEAD" });
           res.end();
           return;
         }
         const body = JSON.stringify(renderPanelApi(store, cfg));
         res.writeHead(200, {
           "content-type": "application/json; charset=utf-8",
-          "cache-control": "no-cache"
+          "cache-control": "no-store"
         });
-        res.end(body);
+        res.end(req.method === "HEAD" ? undefined : body);
       }
     }), "retro.panelApi");
   });

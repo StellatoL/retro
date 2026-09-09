@@ -1,8 +1,9 @@
-// dsh-retro: human-facing slash commands — /retro, /weekly, /blog, /retro config|review|entry|adopt|queue|report|cleanup.
+// 人工命令入口：/retro 管理复盘流程，/weekly 生成周报，/blog 联动博客。
 import path from "node:path";
 import { spawn } from "node:child_process";
+import { pathToFileURL } from "node:url";
 import { rmSync } from "node:fs";
-import { validateConfig, renderConfig, saveConfig as persistConfig, configPath, retroDir } from "./config.js";
+import { validateConfig, renderConfig, saveConfig as persistConfig, loadConfig, parseConfigValue, configPath, retroDir } from "./config.js";
 import { distillSession, distillWeekly } from "./distiller.js";
 import { draftCardFiles, settleCard, draftEntryFile, settleEntry, ensureDirs, readStaging, splitCardFile, stripQuestionsSection, extractEntryFromCard, stagingRoot } from "./settler.js";
 import { draftBlogFromNote, publishBlogPost, captureBlogPosts, listBlogPosts } from "./publisher.js";
@@ -10,7 +11,7 @@ import { proposeUpdate, adoptProposal, dedupeSuggestions, dedupeProposals, dedup
 import { renderReport } from "./report.js";
 import { atomicWrite, clip, todayStamp, nowStamp, safeJoin } from "./util.js";
 
-/** Register all retro commands. */
+/** 注册插件提供的全部斜杠命令。 */
 export function registerCommands(ctx, store, cfg) {
   ctx.commands.register({
     name: "retro",
@@ -55,7 +56,7 @@ export function flags(args) {
     if (m) {
       const key = m[1].replace(/-([a-z])/g, (_, c) => c.toUpperCase());
       out[key] = m[2] ?? true;
-      // `--key value` form: consume the following non-flag token as the value
+      // 处理 --key value：将后续非选项词作为该选项的值。
       if (out[key] === true && i + 1 < args.length && !args[i + 1].startsWith("--")) {
         out[key] = args[++i];
       }
@@ -67,7 +68,7 @@ export function flags(args) {
 }
 
 // ---------------------------------------------------------------------------
-// /retro
+// /retro 命令
 // ---------------------------------------------------------------------------
 async function runRetro(ctx, store, cfg, invocation) {
   try {
@@ -86,18 +87,38 @@ async function runRetro(ctx, store, cfg, invocation) {
   }
 }
 
-/** /retro report — render the HTML dashboard and open it in the default browser. */
-function runReport(store, cfg, rest) {
+/** 按平台调用默认文件打开器；独立参数便于测试时替换进程启动。 */
+export function openReport(filePath, { platform = process.platform, spawnProcess = spawn } = {}) {
+  const url = pathToFileURL(path.resolve(filePath)).href;
+  const [command, args] = platform === "win32"
+    ? ["rundll32.exe", ["url.dll,FileProtocolHandler", url]]
+    : platform === "darwin" ? ["open", [url]] : ["xdg-open", [url]];
+  return new Promise((resolve) => {
+    try {
+      const child = spawnProcess(command, args, { stdio: "ignore", detached: true, windowsHide: true });
+      // spawn 的启动失败通过异步 error 事件返回，不能只用 try/catch。
+      child.once("error", (error) => resolve({ ok: false, error: String(error?.message ?? error) }));
+      child.once("spawn", () => {
+        child.unref();
+        resolve({ ok: true });
+      });
+    } catch (error) {
+      resolve({ ok: false, error: String(error?.message ?? error) });
+    }
+  });
+}
+
+/** /retro report：生成 HTML 报告，并尝试用默认浏览器打开。 */
+async function runReport(store, cfg, rest) {
   try {
     const html = renderReport(store, cfg);
     const outPath = path.join(retroDir(), "retro-report.html");
     atomicWrite(outPath, html);
-    try {
-      const child = spawn("cmd", ["/c", "start", "", outPath], { stdio: "ignore", detached: true, windowsHide: true });
-      child.unref();
-    } catch { /* 打开浏览器失败不阻塞（仍返回路径） */ }
+    const opened = await openReport(outPath);
     store.audit({ actor: "command:report", action: "render-report", target: outPath, ok: true });
-    return ok(`✅ 复盘面板已生成：${outPath}\n（已尝试在默认浏览器打开；如未弹出请手动打开该文件）`);
+    return ok(`✅ 复盘面板已生成：${outPath}\n` + (opened.ok
+      ? "（已尝试在默认浏览器打开；如未弹出请手动打开该文件）"
+      : `（自动打开失败：${opened.error}；请手动打开该文件）`));
   } catch (error) {
     return err(`生成报告失败：${String(error?.message ?? error)}`);
   }
@@ -216,9 +237,6 @@ async function runDraft(ctx, store, cfg, rest) {
     const startOfToday = new Date();
     startOfToday.setHours(0, 0, 0, 0);
 
-    if (scope === "session") {
-      // requires session:<id>
-    }
     if (scope.startsWith("session:")) {
       const sid = scope.slice("session:".length);
       if (!records.some((r) => r.header.id === sid)) return err(`会话不存在：${sid}`);
@@ -300,7 +318,7 @@ async function runReview(ctx, store, cfg, rest) {
         const stagedText = readStaging(cfg, card.stagingPath);
         extracted = extractEntryFromCard(stripQuestionsSection(splitCardFile(stagedText).body));
       } catch { /* 提取失败则用空字段 */ }
-      // Generate an experience-entry draft from the approved card's takeaways.
+      // 根据人工审阅后的卡片生成经验条目草稿。
       const entry = store.addEntry({
         title: card.title,
         ...extracted,
@@ -348,16 +366,11 @@ function runConfig(store, cfg, rest) {
     return ok(`${key}: ${v === undefined ? "（未设置）" : typeof v === "object" ? JSON.stringify(v) : String(v)}`);
   }
   const raw = valueParts.join(" ");
-  let value = raw;
-  if (raw === "true") value = true;
-  else if (raw === "false") value = false;
-  else if (/^-?\d+(\.\d+)?$/.test(raw)) value = Number(raw);
-  else if (raw.includes(",") && ["settleDirs", "readWhitelist", "tags"].some((k) => key.includes(k))) {
-    value = raw.split(",").map((s) => s.trim()).filter(Boolean);
-  }
+  const value = parseConfigValue(key, raw);
   persistConfig({ [key]: value });
-  const next = { ...cfg, [key]: value };
-  return ok(`已更新 ${key} = ${typeof value === "object" ? JSON.stringify(value) : String(value)}\n（下次命令生效；路径配置可用 /retro config vaultPath 调整）\n${validateConfig(next).join("\n")}`);
+  // 各服务共享同一个对象，原位更新才能让下一条命令、工具和面板立即生效。
+  Object.assign(cfg, loadConfig(cfg));
+  return ok(`已更新 ${key} = ${typeof value === "object" ? JSON.stringify(value) : String(value)}\n（已立即生效）\n${validateConfig(cfg).join("\n")}`);
 }
 
 export async function runAdopt(ctx, store, cfg, rest) {
@@ -367,7 +380,7 @@ export async function runAdopt(ctx, store, cfg, rest) {
   let proposals;
   let skippedLines = [];
   if (hasAll) {
-    // `all`：先按语义去重，每组只采纳代表，重复项标记 skipped
+    // all 先按文本相似度去重，每组只采纳代表，重复项标记 skipped。
     const pending = store.listProposals("pending").filter((p) => p.kind !== "retro-suggest");
     const groups = dedupeProposals(pending);
     proposals = groups.map((g) => g.representative);
@@ -395,7 +408,7 @@ export async function runAdopt(ctx, store, cfg, rest) {
 }
 
 // ---------------------------------------------------------------------------
-// /weekly
+// /weekly 命令
 // ---------------------------------------------------------------------------
 
 /**
@@ -439,7 +452,8 @@ async function runWeekly(ctx, store, cfg, invocation) {
           const { complete } = await import("./distiller.js");
           summary = await complete(ctx, cfg, `压缩以下会话转录为 ≤800 字的要点摘要（技术决策/踩坑/结论）：\n\n${clip(summary, 12000)}`, { signal });
         }
-        const title = (await ctx.sessionQuery.readTitle(rec.header.id)) ?? rec.header.id;
+        const snapshot = await ctx.sessionQuery.readTitle(rec.header.id);
+        const title = (typeof snapshot === "string" ? snapshot : snapshot?.title) ?? rec.header.id;
         summaries.push({ sessionId: rec.header.id, title, summary });
       } catch (error) {
         errors.push(`${rec.header.id}: ${String(error?.message ?? error).slice(0, 120)}`);
@@ -506,7 +520,7 @@ async function runWeekly(ctx, store, cfg, invocation) {
       `统计：本周会话 ${records.length} 个${errors.length ? `（${errors.length} 个读取失败）` : ""}，素材 ${pending.materials} 条`,
       `待审：卡片 ${pending.cards.length} / 条目 ${pending.entries.length} / 提案 ${pending.proposals.length} / blog 草稿 ${pending.publish.length}`,
       "",
-      "请在 Obsidian 中审阅，勾选 keep/merge/discard 后：/retro review <id> keep 落库。"
+      "请在 Obsidian 中审阅，再通过 /retro review <id> keep 确认落库，或用 discard 丢弃。"
     ];
     if (proposalLines.length > 0) {
       lines.push("", "🧬 本周进化提案（/retro adopt <id> 采纳）：", ...proposalLines);
@@ -519,7 +533,7 @@ async function runWeekly(ctx, store, cfg, invocation) {
 }
 
 // ---------------------------------------------------------------------------
-// /blog
+// /blog 命令
 // ---------------------------------------------------------------------------
 async function runBlog(ctx, store, cfg, invocation) {
   try {
@@ -542,9 +556,9 @@ async function runBlog(ctx, store, cfg, invocation) {
       const source = opts._.join(" ").trim();
       if (!source) {
         // 友好提示：列出可直接作为来源的已落库卡片与最近笔记
-        const approved = store.listCards("approved").filter((c) => c.vaultNote).slice(-5);
+        const approved = store.listCards("approved").filter((c) => c.vaultNote).slice(0, 5);
         const lines = [
-          "用法：/blog draft <notePath|cardId> [--tags a,b] [--category x]",
+          "用法：/blog draft <notePath|cardId>",
           "（notePath 为 vault 内相对路径，如 Index/03_Full_Notes/04_Retro/xxx.md；含空格时无需引号，直接输入完整路径）",
           ""
         ];
@@ -561,7 +575,7 @@ async function runBlog(ctx, store, cfg, invocation) {
       if (!result.ok) return err(result.error);
       const dupes = dedupeBlogPosts(cfg, result.title ?? "");
       return ok(
-        `✅ Blog 草稿已创建：${result.path}（draft: true，生产构建不会发布）\n` +
+        `✅ Blog 草稿已创建：${result.path}（draft: true；请确认站点构建会排除草稿）\n` +
         `本地预览：在 ${cfg.blogPath || "blogPath（未配置）"} 运行 pnpm dev 后访问\n` +
         `发布：/blog publish ${result.slug}${cfg.blogAutoPush ? "" : " [--push]"}` +
         (dupes.length > 0 ? `\n⚠️ 与已有文章标题相似：${dupes.map((d) => d.title).join("、")}` : "")

@@ -1,4 +1,4 @@
-// dsh-retro: configuration (code defaults < row config < runtime file).
+// 配置优先级：默认值 < Cordis 行配置 < 运行时文件；环境变量仅补齐空路径。
 import path from "node:path";
 import os from "node:os";
 import { existsSync } from "node:fs";
@@ -11,8 +11,8 @@ export const DEFAULTS = {
   vaultPath: "",
   blogPath: "",
   blogBaseUrl: "",
-  // 复盘系统统一放在 Index/06_Retro/ 下（用户确认的布局）；
-  // 落库目录也必须在 Index 下，默认 03_Full_Notes/04_Retro（03 内的复盘子文件夹）。
+  // 默认使用 Index/06_Retro/ 管理复盘过程，正式复盘放在 03_Full_Notes/04_Retro。
+  // 如调整布局，应同时配置暂存、落库与读取白名单。
   stagingDir: "Index/06_Retro/_retro",       // 复盘卡片暂存区（人工审阅）
   experienceRoot: "Index/06_Retro/经验库",    // 永久经验库
   proposalsDir: "Index/06_Retro/_proposals",  // 进化提案（skill/AGENTS.md 待采纳）
@@ -33,7 +33,7 @@ export const DEFAULTS = {
   chunkChars: 12000
 };
 
-/** Plugin-owned state/config dir. Overridable via DSH_RETRO_DIR (tests) or $DSH_HOME/retro. */
+/** 状态与配置目录：优先使用 DSH_RETRO_DIR，否则使用 DSH_HOME 下的 retro。 */
 export function retroDir() {
   if (process.env.DSH_RETRO_DIR) return process.env.DSH_RETRO_DIR;
   const home = process.env.DSH_HOME || path.join(os.homedir(), ".dsh");
@@ -71,8 +71,7 @@ function deepMerge(base, overlay) {
   return out;
 }
 
-/** Effective config: DEFAULTS < rowConfig (cordis row) < runtime file (~/.dsh/retro/config.json);
- * env vars (DSH_RETRO_VAULT / DSH_RETRO_BLOG / DSH_RETRO_BLOG_URL) fill in only when still empty. */
+/** 合并默认值、Cordis 行配置与运行时文件；环境变量仅在相应路径仍为空时补齐。 */
 export function loadConfig(rowConfig = {}) {
   const file = readFileConfig();
   const merged = deepMerge(deepMerge(DEFAULTS, rowConfig), file);
@@ -82,7 +81,7 @@ export function loadConfig(rowConfig = {}) {
   return merged;
 }
 
-/** Persist a partial update to the runtime config file. */
+/** 将局部配置更新合并并持久化到运行时文件。 */
 export function saveConfig(patch) {
   const current = readFileConfig();
   const next = deepMerge(current, patch);
@@ -90,7 +89,37 @@ export function saveConfig(patch) {
   return next;
 }
 
-/** Basic environment sanity checks; returns a list of warnings (never throws). */
+/** 按配置声明的类型解析命令输入，避免把路径、数组和分段长度保存成错误类型。 */
+export function parseConfigValue(key, raw) {
+  if (!Object.hasOwn(DEFAULTS, key)) throw new Error(`未知配置项：${key}`);
+  const sample = DEFAULTS[key];
+  if (Array.isArray(sample)) {
+    const values = raw.startsWith("[") ? JSON.parse(raw) : raw.split(",").map((item) => item.trim()).filter(Boolean);
+    if (!Array.isArray(values) || values.length === 0 || values.some((item) => typeof item !== "string" || !item.trim())) {
+      throw new Error(`${key} 必须是非空字符串数组，可用逗号分隔`);
+    }
+    return values;
+  }
+  if (typeof sample === "boolean") {
+    if (raw !== "true" && raw !== "false") throw new Error(`${key} 只能为 true 或 false`);
+    return raw === "true";
+  }
+  if (typeof sample === "number") {
+    const value = Number(raw);
+    if (!Number.isInteger(value) || value <= 0) throw new Error(`${key} 必须为正整数`);
+    return value;
+  }
+  if (sample && typeof sample === "object") {
+    const value = JSON.parse(raw);
+    if (!value || typeof value !== "object" || Array.isArray(value) || Object.entries(value).some(([name, entry]) => !Object.hasOwn(sample, name) || typeof entry !== "string")) {
+      throw new Error(`${key} 必须是包含 experience、permanent 或 weekly 路径的 JSON 对象`);
+    }
+    return value;
+  }
+  return raw;
+}
+
+/** 检查必要路径，返回供命令和日志展示的提示。 */
 export function validateConfig(cfg) {
   const warnings = [];
   if (!cfg.vaultPath || !existsSync(cfg.vaultPath)) {
@@ -102,7 +131,7 @@ export function validateConfig(cfg) {
   return warnings;
 }
 
-/** Human-readable config dump (paths only; no secrets involved). */
+/** 将常用配置与状态目录格式化为可读文本。 */
 export function renderConfig(cfg) {
   const rows = [
     ["vaultPath", cfg.vaultPath],
