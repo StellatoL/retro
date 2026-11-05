@@ -350,3 +350,77 @@ export function clip(text, max) {
   const s = String(text ?? "");
   return s.length <= max ? s : `${s.slice(0, max)}\n…[截断]`;
 }
+
+/** 结构化字段与 Markdown 二级标题的对应关系（用于面板内联编辑的局部替换）。 */
+const SECTION_ALIASES = {
+  goal: ["项目目标", "目标"],
+  env: ["环境与栈", "环境"],
+  process: ["关键过程", "过程"],
+  pitfalls: ["踩坑与根因", "踩坑"],
+  lessons: ["关键经验", "经验"],
+  actions: ["行动项"]
+};
+
+const QUESTIONS_ALIASES = ["待确认问题"];
+
+function normalizeHeadingText(text) {
+  return String(text ?? "").replace(/^#{1,6}\s*/, "").replace(/[：:\s]+$/g, "").trim();
+}
+
+/**
+ * 在 Markdown 中定位指定标题的二级小节，返回其正文行区间。
+ * @returns {{ heading: number, start: number, end: number } | null} 标题行号与正文起止（不含标题行）。
+ */
+function locateSection(lines, aliases) {
+  for (let i = 0; i < lines.length; i += 1) {
+    const match = /^##\s+(.+)$/.exec(lines[i]);
+    if (!match) continue;
+    const name = normalizeHeadingText(match[1]);
+    if (!aliases.some((alias) => name.includes(alias))) continue;
+    let end = lines.length;
+    for (let j = i + 1; j < lines.length; j += 1) {
+      if (/^#{1,2}\s+/.test(lines[j])) { end = j; break; }
+    }
+    return { heading: i, start: i + 1, end };
+  }
+  return null;
+}
+
+/**
+ * 非破坏性合并卡片正文：只替换已知小节的正文，用户手写的其他章节原样保留。
+ * @param {string} rawMd - 原始 Markdown。
+ * @param {{ sections?: Record<string, string>, answers?: Array<{question: string, answer: string}> }} patch
+ * @returns {string} 合并后的 Markdown。
+ */
+export function patchMarkdownSections(rawMd, { sections = {}, answers = [] } = {}) {
+  const lines = String(rawMd ?? "").split(/\r?\n/);
+  for (const [key, body] of Object.entries(sections ?? {})) {
+    if (typeof body !== "string") continue;
+    const aliases = SECTION_ALIASES[key];
+    if (!aliases) continue;
+    const found = locateSection(lines, aliases);
+    const block = ["", ...body.split(/\r?\n/), ""];
+    if (found) {
+      lines.splice(found.start, found.end - found.start, ...block);
+    } else {
+      lines.push("", `## ${aliases[0]}`, ...block);
+    }
+  }
+  if (Array.isArray(answers) && answers.length > 0) {
+    const items = answers
+      .filter((entry) => entry && typeof entry.answer === "string" && entry.answer.trim())
+      .map((entry) => `- ${String(entry.question ?? "（问题）").trim()} → ${entry.answer.trim()}`);
+    if (items.length > 0) {
+      const found = locateSection(lines, QUESTIONS_ALIASES);
+      if (found) {
+        const body = lines.slice(found.start, found.end);
+        // 去掉正文尾部空行后再追加，避免每次合并都累积空行。
+        while (body.length > 0 && body[body.length - 1].trim() === "") body.pop();
+        lines.splice(found.start, found.end - found.start, ...body, ...items, "");
+      } else {
+        lines.push("", "## 待确认问题", ...items, "");
+      }
+    }
+  }
+  return lines.join("\n");
+}

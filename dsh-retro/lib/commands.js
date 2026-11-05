@@ -3,7 +3,7 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import { pathToFileURL } from "node:url";
 import { rmSync } from "node:fs";
-import { validateConfig, renderConfig, saveConfig as persistConfig, loadConfig, parseConfigValue, configPath, retroDir } from "./config.js";
+import { validateConfig, renderConfig, saveConfig as persistConfig, loadConfig, parseConfigValue, getConfigPath, configPath, retroDir } from "./config.js";
 import { distillSession, distillWeekly } from "./distiller.js";
 import { draftCardFiles, settleCard, draftEntryFile, settleEntry, ensureDirs, readStaging, splitCardFile, stripQuestionsSection, extractEntryFromCard, stagingRoot } from "./settler.js";
 import { draftBlogFromNote, publishBlogPost, captureBlogPosts, listBlogPosts } from "./publisher.js";
@@ -362,7 +362,7 @@ function runConfig(store, cfg, rest) {
   }
   const [key, ...valueParts] = rest;
   if (valueParts.length === 0) {
-    const v = cfg[key];
+    const v = getConfigPath(cfg, key);
     return ok(`${key}: ${v === undefined ? "（未设置）" : typeof v === "object" ? JSON.stringify(v) : String(v)}`);
   }
   const raw = valueParts.join(" ");

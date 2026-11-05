@@ -1,5 +1,13 @@
 # 变更记录
 
+## 未发布（0.6.0 开发中）
+
+- P0 基础层：新增 `lib/guard.js`（跨进程 `store.lock`、内容哈希、写前 `.bak` 备份、笔记读取作用域）。
+- store 升级为 v2：`meta.schemaVersion` 与单调递增 `meta.rev`；旧文件首次加载自动备份 `store.v1.bak.json` 再原地升级，旧字段全部保留。
+- 配置支持分组点号键（`security.enableWriteApi` 等），写接口与全库笔记预览默认关闭。
+- `util.js` 新增 `patchMarkdownSections`：按二级标题局部替换卡片正文，保留用户手写章节。
+- 新增 18 项单测（store v2 迁移、并发锁、笔记作用域、Markdown 合并、分组配置）。
+
 ## 0.5.0 — 2026-11-05
 
 - 新增左侧栏入口：按 DSH 0.2 的插槽契约注册 `main` 面板与 `sidebar.panellist` 图标行，点击侧边栏“复盘”行即在主区域打开面板。
