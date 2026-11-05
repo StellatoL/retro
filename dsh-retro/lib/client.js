@@ -23,6 +23,15 @@ window.__ModuleLoader__.load({
     var POLL_VISIBLE_MS = 15000;
     var POLL_HIDDEN_MS = 60000;
     var PAGE_LIMIT = 50;
+    // 面板视图：卡片/提案走队列，其余走 resource 列表。
+    var VIEWS = [
+      { key: "cards", label: "卡片" },
+      { key: "proposals", label: "提案" },
+      { key: "materials", label: "素材" },
+      { key: "weekly", label: "周报" },
+      { key: "blog", label: "博客" },
+      { key: "entries", label: "经验库" }
+    ];
 
     // ---------------------------------------------------------------------
     // [1] 样式：只使用宿主 --dsw-alias-* 语义 token，不写死颜色
@@ -463,21 +472,25 @@ window.__ModuleLoader__.load({
       var snapshot = state.snapshot;
       var writeApiEnabled = snapshot?.writeApiEnabled === true;
 
-      // 维度变化时重新拉取（服务端过滤，避免前端全量过滤）
+      // 视图或筛选变化时重新拉取：卡片支持状态/关键字过滤，其余按 resource 拉列表。
       React.useEffect(() => {
-        if (view !== "cards") return;
         var query = { limit: String(PAGE_LIMIT) };
-        if (filter.status) query.status = filter.status;
-        if (filter.q.trim()) query.q = filter.q.trim();
+        if (view === "cards") {
+          if (filter.status) query.status = filter.status;
+          if (filter.q.trim()) query.q = filter.q.trim();
+        } else if (view !== "proposals") {
+          query.resource = view;
+        }
         store.loadSnapshot(query);
       }, [store, view, filter.status, filter.q]);
 
-      function selectCard(card) {
-        setSelected({ type: "card", id: card.id });
+      function selectRow(row) {
+        if (!row || !row.detailType) return;
+        setSelected({ type: row.detailType, id: row.id });
         setDrafts({});
         setEdits({ actions: "", lessons: "", answers: "" });
-        store.loadDetail("card", card.id).then((detail) => {
-          if (!detail || detail.error) return;
+        store.loadDetail(row.detailType, row.id).then((detail) => {
+          if (row.detailType !== "card" || !detail || detail.error) return;
           // 预填现有小节内容，用户改完直接保存回暂存区。
           setEdits({
             actions: extractSection(detail.rawMarkdown, "actions"),
@@ -485,11 +498,6 @@ window.__ModuleLoader__.load({
             answers: ""
           });
         });
-      }
-      function selectProposal(proposal) {
-        setSelected({ type: "proposal", id: proposal.id });
-        setDrafts({});
-        store.loadDetail("proposal", proposal.id);
       }
       function toggleChosen(id) {
         setChosen(chosen.includes(id) ? chosen.filter((item) => item !== id) : [...chosen, id]);
@@ -591,19 +599,29 @@ window.__ModuleLoader__.load({
         setSelected(null);
       }
 
-      var rows = view === "cards" ? (snapshot?.page?.items ?? snapshot?.queue?.cards ?? []) : (snapshot?.queue?.proposals ?? []);
+      // 统一行模型：不同视图给出 detailType，材料流无详情。
+      function rowsFor(currentView) {
+        var page = snapshot?.page;
+        if (currentView === "cards") {
+          return (page?.resource === "cards" ? page.items : (snapshot?.queue?.cards ?? []))
+            .map((item) => ({ ...item, detailType: "card" }));
+        }
+        if (currentView === "proposals") {
+          return (snapshot?.queue?.proposals ?? []).map((item) => ({ ...item, detailType: "proposal" }));
+        }
+        var items = page?.resource === currentView ? page.items : [];
+        var detailType = currentView === "weekly" ? "card" : currentView === "blog" ? "blog" : currentView === "entries" ? "entry" : null;
+        return items.map((item) => ({ ...item, detailType }));
+      }
+      var rows = rowsFor(view);
 
       var toolbar = h("div", { className: "dsh-retro-toolbar" },
-        h("div", { className: "dsh-retro-tabs" },
-          h("button", {
-            className: "dsh-retro-tab", "data-active": String(view === "cards"),
-            onClick: () => { setView("cards"); setSelected(null); }
-          }, `卡片 ${snapshot?.stats?.draftedCards ?? 0}`),
-          h("button", {
-            className: "dsh-retro-tab", "data-active": String(view === "proposals"),
-            onClick: () => { setView("proposals"); setSelected(null); }
-          }, `提案 ${snapshot?.stats?.pendingProposals ?? 0}`)
-        ),
+        h("div", { className: "dsh-retro-tabs" }, VIEWS.map((entry) => h("button", {
+          key: entry.key,
+          className: "dsh-retro-tab",
+          "data-active": String(view === entry.key),
+          onClick: () => { setView(entry.key); setSelected(null); }
+        }, entry.label))),
         view === "cards" ? h("select", {
           className: "dsh-retro-select",
           value: filter.status,
@@ -647,8 +665,7 @@ window.__ModuleLoader__.load({
           if (event.key === "j" || event.key === "ArrowDown") nextIndex = Math.min(rows.length - 1, currentIndex + 1);
           else if (event.key === "k" || event.key === "ArrowUp") nextIndex = Math.max(0, currentIndex <= 0 ? 0 : currentIndex - 1);
           else if (event.key === "Enter" && currentIndex >= 0) {
-            if (view === "cards") selectCard(rows[currentIndex]);
-            else selectProposal(rows[currentIndex]);
+            selectRow(rows[currentIndex]);
             return;
           } else if (event.key === "Escape") {
             setSelected(null);
@@ -657,10 +674,7 @@ window.__ModuleLoader__.load({
             return;
           }
           event.preventDefault?.();
-          if (nextIndex !== currentIndex && nextIndex >= 0) {
-            if (view === "cards") selectCard(rows[nextIndex]);
-            else selectProposal(rows[nextIndex]);
-          }
+          if (nextIndex !== currentIndex && nextIndex >= 0) selectRow(rows[nextIndex]);
         }
         listBody = h("div", {
           className: "dsh-retro-rows",
@@ -678,7 +692,7 @@ window.__ModuleLoader__.load({
             role: "option",
             "aria-selected": String(Boolean(isActive)),
             "data-active": String(Boolean(isActive)),
-            onClick: () => (view === "cards" ? selectCard(row) : selectProposal(row))
+            onClick: () => selectRow(row)
           },
             view === "proposals"
               ? h("input", {
@@ -710,7 +724,18 @@ window.__ModuleLoader__.load({
               : !detail
                 ? h("div", { className: "dsh-retro-empty" }, "加载中…")
                 : h("div", null,
-                  selected.type === "proposal"
+                  selected.type === "blog"
+                    ? h("div", null,
+                      h("p", { className: "dsh-retro-mono" }, `slug：${detail.meta?.slug} · ${detail.meta?.draft ? "草稿" : "已发布"}`),
+                      h("p", { className: "dsh-retro-mono" }, detail.checks?.ready ? "预检通过：可以发布" : `预检未通过：缺失 ${detail.checks?.missingImages?.length ?? 0} 个本地图片`),
+                      (detail.checks?.missingImages ?? []).length > 0
+                        ? h("ul", null, detail.checks.missingImages.map((ref, index) => h("li", { key: index, className: "dsh-retro-mono" }, ref)))
+                        : null,
+                      h(Markdown, { text: detail.rawMarkdown ?? "" })
+                    )
+                    : selected.type === "entry"
+                      ? h("div", null, h(Markdown, { text: detail.rawMarkdown ?? "" }))
+                      : selected.type === "proposal"
                     ? h("div", null,
                       h("p", { className: "dsh-retro-mono" }, `目标文件：${detail.meta?.targetFile ?? "（未知类型）"}`),
                       detail.meta?.targetExists === false
@@ -750,7 +775,19 @@ window.__ModuleLoader__.load({
                     )
                 )
           ),
-          selected.type === "card"
+          selected.type === "blog"
+            ? h("div", { className: "dsh-retro-detail-foot" },
+              h("button", {
+                className: "dsh-retro-btn",
+                onClick: () => copyText(`/blog publish ${selected.id}`, toast)
+              }, "复制发布命令"))
+            : selected.type === "entry"
+              ? h("div", { className: "dsh-retro-detail-foot" },
+                h("button", {
+                  className: "dsh-retro-btn",
+                  onClick: () => copyText(`/retro entry keep ${selected.id}`, toast)
+                }, "复制沉淀命令"))
+              : selected.type === "card"
             ? h("div", { className: "dsh-retro-detail-foot" },
               h("button", {
                 className: "dsh-retro-btn",

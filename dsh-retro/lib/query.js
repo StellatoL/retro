@@ -1,10 +1,12 @@
 // 只读查询服务：面板快照、过滤分页与实体详情。
 // 快照不带参数时与 0.5.0 字段完全一致；带参数时追加 rev / page 等增量字段。
 import path from "node:path";
+import { existsSync } from "node:fs";
 import { readStaging, proposalsRoot, entriesRoot } from "./settler.js";
 import { computeContentHash, verifyNoteScope, RetroError } from "./guard.js";
-import { readOptional } from "./util.js";
+import { readOptional, parseFrontmatter } from "./util.js";
 import { proposalTarget, proposalSimilarity, extractProposalContent } from "./evolvor.js";
+import { listBlogPosts, blogPostsDir } from "./publisher.js";
 
 /** 笔记预览的体积上限：超出部分截断并标记，避免一次响应过大。 */
 const MAX_NOTE_BYTES = 262144;
@@ -83,6 +85,26 @@ function cardSearchText(card) {
   return `${card.title ?? ""}\n${fields}`.toLowerCase();
 }
 
+/** 读取博客文章列表，统一把"未配置/目录缺失"转成带错误码的异常。 */
+function loadBlogPosts(cfg) {
+  try {
+    const list = listBlogPosts(cfg);
+    if (!list || list.ok === false) {
+      throw new RetroError("RETRO_BLOG_UNAVAILABLE", list?.error ?? "博客目录不可用", {
+        status: 400,
+        hint: "请先运行 /retro config blogPath <博客仓库路径>"
+      });
+    }
+    return list;
+  } catch (error) {
+    if (error instanceof RetroError) throw error;
+    throw new RetroError("RETRO_BLOG_UNAVAILABLE", String(error?.message ?? error), {
+      status: 400,
+      hint: "请先运行 /retro config blogPath <博客仓库路径>"
+    });
+  }
+}
+
 /**
  * 创建查询服务实例。
  * @param {{ store: import("./store.js").RetroStore, cfg: object }} deps
@@ -133,6 +155,49 @@ export function createQueryService({ store, cfg }) {
     };
   }
 
+  /** 除卡片外的资源列表：经验条目、素材流、周报、博客。 */
+  function queryResource(resource, params = {}) {
+    const limit = Math.min(maxLimit, Math.max(1, Number(params.limit) || defaultLimit));
+    if (resource === "entries") {
+      const items = store.listEntries()
+        .filter((entry) => !params.status || entry.status === params.status)
+        .slice(0, limit)
+        .map((entry) => ({ id: entry.id, title: entry.title, status: entry.status, notePath: entry.notePath ?? null, updatedAt: entry.updatedAt }));
+      return { resource, items, nextCursor: null, total: items.length, limit };
+    }
+    if (resource === "materials") {
+      const since = Number(params.since) || 0;
+      const items = store.listMaterials({ since, limit })
+        .filter((material) => !params.session || material.sessionId === params.session)
+        .filter((material) => !params.kind || material.kind === params.kind)
+        .map((material) => ({
+          id: material.id,
+          sessionId: material.sessionId,
+          kind: material.kind,
+          summary: material.summary,
+          importance: material.importance,
+          ts: material.ts
+        }));
+      return { resource, items, nextCursor: null, total: items.length, limit };
+    }
+    if (resource === "weekly") {
+      const items = store.listCards()
+        .filter((card) => card.source === "weekly")
+        .slice(0, limit)
+        .map((card) => ({ id: card.id, title: card.title, status: card.status, stagingPath: card.stagingPath, createdAt: card.createdAt }));
+      return { resource, items, nextCursor: null, total: items.length, limit };
+    }
+    if (resource === "blog") {
+      const list = loadBlogPosts(cfg);
+      const items = (list.posts ?? [])
+        .filter((post) => params.draft === undefined || String(post.draft) === params.draft)
+        .slice(0, limit)
+        .map((post) => ({ id: post.slug, title: post.title, draft: post.draft === true, published: post.published ?? null, tags: post.tags ?? [] }));
+      return { resource, items, nextCursor: null, total: items.length, limit };
+    }
+    throw new RetroError("RETRO_BAD_REQUEST", `未知资源类型：${resource}`, { status: 400, hint: "可用：cards / entries / materials / weekly / blog" });
+  }
+
   return {
     /**
      * 面板快照：不带查询参数时与 0.5.0 完全一致；带参数时追加 rev / page。
@@ -151,7 +216,10 @@ export function createQueryService({ store, cfg }) {
         writeApiEnabled: cfg.security?.enableWriteApi === true
       };
       const wantsPage = ["resource", "status", "q", "limit", "cursor", "sort"].some((key) => params[key] !== undefined);
-      if (wantsPage) snapshot.page = queryCards(params);
+      if (wantsPage) {
+        const resource = params.resource ?? "cards";
+        snapshot.page = resource === "cards" ? queryCards(params) : queryResource(resource, params);
+      }
       return snapshot;
     },
 
@@ -255,7 +323,39 @@ export function createQueryService({ store, cfg }) {
         const truncated = Buffer.byteLength(text, "utf8") > MAX_NOTE_BYTES;
         return { ok: true, type: "note", id, rawMarkdown: truncated ? text.slice(0, MAX_NOTE_BYTES) : text, truncated };
       }
-      throw new RetroError("RETRO_BAD_REQUEST", `未知的详情类型：${type}`, { status: 400, hint: "可用：card / proposal / entry / note" });
+      if (type === "blog") {
+        const list = loadBlogPosts(cfg);
+        const post = (list.posts ?? []).find((item) => item.slug === id);
+        if (!post) throw new RetroError("RETRO_ENTITY_NOT_FOUND", `博客文章不存在：${id}`, { status: 404 });
+        const dir = blogPostsDir(cfg);
+        const text = readOptional(path.join(dir, post.file)) ?? "";
+        const { body } = parseFrontmatter(text);
+        // 发布前预检：draft 标记与本地图片是否真实存在（外链与 data: 跳过）。
+        const missingImages = [];
+        for (const match of body.matchAll(/!\[[^\]]*\]\(([^)]+)\)/g)) {
+          const ref = String(match[1]).trim();
+          if (/^https?:/i.test(ref) || ref.startsWith("data:")) continue;
+          const target = path.resolve(dir, ref.replace(/^\.\//, ""));
+          if (!existsSync(target)) missingImages.push(ref);
+        }
+        return {
+          ok: true,
+          type: "blog",
+          id,
+          meta: {
+            slug: post.slug,
+            title: post.title,
+            draft: post.draft === true,
+            published: post.published ?? null,
+            tags: post.tags ?? [],
+            category: post.category ?? "",
+            file: post.file
+          },
+          checks: { draftFlag: post.draft === true, missingImages, ready: missingImages.length === 0 },
+          rawMarkdown: body
+        };
+      }
+      throw new RetroError("RETRO_BAD_REQUEST", `未知的详情类型：${type}`, { status: 400, hint: "可用：card / proposal / entry / note / blog" });
     },
 
     /** 提案暂存目录，供面板展示提案来源。 */

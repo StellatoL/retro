@@ -2,6 +2,10 @@
 
 ## 未发布（0.7.0 开发中）
 
+- P2 资源视图：快照支持 `resource=materials|weekly|blog|entries` 列表（素材可按 `kind`/`session` 过滤），新增 `GET /retro/detail?type=blog` 返回 frontmatter、正文与发布前预检（draft 标记、缺失本地图片）。
+- 客户端新增素材 / 周报 / 博客 / 经验库四个视图；博客详情展示预检结果并可复制发布命令。
+- 博客未配置时统一返回 `RETRO_BLOG_UNAVAILABLE`，而不是抛出未分类异常。
+- 新增 5 项 P2 后端单测与客户端视图入口断言。
 - P1 提案审阅：`GET /retro/detail?type=proposal` 返回将追加的行、目标文件末尾上下文、目标是否存在与相似提案提示（bigram Jaccard）。
 - P1 批量采纳：`POST /retro/action` 新增 `proposal.adopt`（支持 `ids` 数组或 `all`，`all` 仍按相似度去重并标记 skipped）。
 - P1 内联编辑：新增 `card.patch` 动作与 `actions.patchCard`，按二级标题局部写回暂存文件并更新 `contentHash`，同样受乐观锁保护。

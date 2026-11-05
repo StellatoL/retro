@@ -262,6 +262,8 @@ test("左侧栏注册 main 与 sidebar.panellist，零 innerHTML 渲染卡片与
   // 主面板：列表渲染 + 无 innerHTML 注入点
   const tree = expand({ type: main.component, props: {}, children: [] });
   assert.equal(findByClass(tree, "dsh-retro-main").length, 1);
+  // 六个视图入口：卡片 / 提案 / 素材 / 周报 / 博客 / 经验库
+  assert.equal(findByClass(tree, "dsh-retro-tab").length, 6);
   const rows = findByClass(tree, "dsh-retro-row");
   assert.equal(rows.length, 2);
   assert.ok(textOf(tree).includes("草稿卡"));
