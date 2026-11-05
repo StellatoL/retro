@@ -1,15 +1,16 @@
 // 人工命令入口：/retro 管理复盘流程，/weekly 生成周报，/blog 联动博客。
+// 写入动作统一委托给 lib/actions.js，命令层只做参数解析与结果展示。
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { pathToFileURL } from "node:url";
-import { rmSync } from "node:fs";
 import { validateConfig, renderConfig, saveConfig as persistConfig, loadConfig, parseConfigValue, getConfigPath, configPath, retroDir } from "./config.js";
 import { distillSession, distillWeekly } from "./distiller.js";
-import { draftCardFiles, settleCard, draftEntryFile, settleEntry, ensureDirs, readStaging, splitCardFile, stripQuestionsSection, extractEntryFromCard, stagingRoot } from "./settler.js";
+import { draftCardFiles, draftEntryFile } from "./settler.js";
 import { draftBlogFromNote, publishBlogPost, captureBlogPosts, listBlogPosts } from "./publisher.js";
-import { proposeUpdate, adoptProposal, dedupeSuggestions, dedupeProposals, dedupeBlogPosts, updateMoc } from "./evolvor.js";
+import { proposeUpdate, dedupeSuggestions, dedupeBlogPosts, updateMoc } from "./evolvor.js";
 import { renderReport } from "./report.js";
-import { atomicWrite, clip, todayStamp, nowStamp, safeJoin } from "./util.js";
+import { atomicWrite, clip, todayStamp, nowStamp } from "./util.js";
+import { createActionService } from "./actions.js";
 
 /** 注册插件提供的全部斜杠命令。 */
 export function registerCommands(ctx, store, cfg) {
@@ -127,28 +128,8 @@ async function runReport(store, cfg, rest) {
 /** /retro cleanup — 删除所有已丢弃（discarded）卡片的暂存文件（白名单内）。 */
 function runCleanup(store, cfg, rest) {
   try {
-    if (!cfg.vaultPath) return err("vaultPath 未配置：运行 /retro config vaultPath <路径>");
-    const discarded = store.listCards("discarded");
-    let removed = [];
-    let failed = [];
-    for (const card of discarded) {
-      if (!card.stagingPath) continue;
-      try {
-        const target = safeJoin(stagingRoot(cfg), card.stagingPath);
-        rmSync(target, { force: true });
-        removed.push(card.stagingPath);
-      } catch {
-        failed.push(card.stagingPath);
-      }
-    }
-    if (removed.length > 0) {
-      store.audit({ actor: "command:cleanup", action: "cleanup-staging", target: removed.join(", "), ok: true, note: `failed ${failed.length}` });
-    }
-    const lines = removed.length > 0
-      ? [`✅ 已清理 ${removed.length} 个已丢弃卡片的暂存文件：`, ...removed.map((f) => `- ${f}`)]
-      : ["没有可清理的已丢弃卡片暂存文件（当前无 discarded 卡片残留）"];
-    if (failed.length > 0) lines.push("", `⚠️ 清理失败 ${failed.length} 个：${failed.join(", ")}`);
-    return ok(lines.join("\n"));
+    const result = createActionService({ store, cfg }).cleanupStaging({ actor: "command:cleanup" });
+    return result.ok ? ok(result.message) : err(result.message);
   } catch (error) {
     return err(`清理失败：${String(error?.message ?? error)}`);
   }
@@ -303,35 +284,14 @@ async function runReview(ctx, store, cfg, rest) {
   if (act === "edit" && tail.length === 0) return err("edit 需要附带修改意见：/retro review <id> edit <意见>");
 
   try {
-    ensureDirs(cfg);
-    const result = settleCard(cfg, store, card, {
-      action: act,
-      dir: typeof opts.dir === "string" ? opts.dir : undefined,
-      note: act === "edit" ? tail.join(" ") : null,
+    const result = createActionService({ store, cfg }).reviewCard({
+      id,
+      subAction: act,
+      targetDir: typeof opts.dir === "string" ? opts.dir : undefined,
+      instruction: act === "edit" ? tail.join(" ") : null,
       actor: "command:review"
     });
-    let extra = "";
-    if (result.ok && result.status === "approved") {
-      // 从用户审阅后的卡片正文自动提取经验字段（而非空模板）
-      let extracted = { use: "", model: "", example: "", pitfalls: [], links: [] };
-      try {
-        const stagedText = readStaging(cfg, card.stagingPath);
-        extracted = extractEntryFromCard(stripQuestionsSection(splitCardFile(stagedText).body));
-      } catch { /* 提取失败则用空字段 */ }
-      // 根据人工审阅后的卡片生成经验条目草稿。
-      const entry = store.addEntry({
-        title: card.title,
-        ...extracted,
-        links: [...extracted.links, card.vaultNote ? `[[${card.vaultNote.replace(/\.md$/, "")}]]` : null].filter(Boolean),
-        tags: ["experience"],
-        source: "card",
-        cardId: card.id,
-        status: "drafted"
-      });
-      const { relPath } = draftEntryFile(cfg, store, entry);
-      extra = `\n已生成经验条目草稿：${relPath} → 确认沉淀为永久经验：\`/retro entry keep ${entry.id}\``;
-    }
-    return ok(result.message + extra);
+    return ok(result.message);
   } catch (error) {
     return err(`落库失败：${String(error?.message ?? error)}`);
   }
@@ -343,13 +303,8 @@ function runEntry(store, cfg, rest) {
   const entry = store.getEntry(id);
   if (!entry) return err(`经验条目不存在：${id}`);
   try {
-    const result = settleEntry(cfg, store, entry);
-    let mocNote = "";
-    try {
-      const moc = updateMoc(cfg, store, { actor: "command:entry" });
-      mocNote = `\n经验库索引已刷新（${moc.count} 条）：${moc.path}`;
-    } catch { /* 索引失败不阻塞沉淀 */ }
-    return ok(`已沉淀为永久经验：${result.path}${mocNote}`);
+    const result = createActionService({ store, cfg }).keepEntry({ id, actor: "command:entry" });
+    return ok(result.message);
   } catch (error) {
     return err(`沉淀失败：${String(error?.message ?? error)}`);
   }
@@ -376,35 +331,8 @@ function runConfig(store, cfg, rest) {
 export async function runAdopt(ctx, store, cfg, rest) {
   const [target] = rest;
   if (!target) return err("用法：/retro adopt <proposalId|all>（用 /retro queue 查看待采纳提案）");
-  const hasAll = target === "all";
-  let proposals;
-  let skippedLines = [];
-  if (hasAll) {
-    // all 先按文本相似度去重，每组只采纳代表，重复项标记 skipped。
-    const pending = store.listProposals("pending").filter((p) => p.kind !== "retro-suggest");
-    const groups = dedupeProposals(pending);
-    proposals = groups.map((g) => g.representative);
-    for (const g of groups) {
-      for (const dup of g.duplicates) {
-        store.updateProposal(dup.id, { status: "skipped", skipNote: `与 ${g.representative.title} 重复` });
-        skippedLines.push(`⏭️ ${dup.id} [${dup.kind}]「${dup.title}」→ 已跳过（与「${g.representative.title}」重复）`);
-      }
-    }
-  } else {
-    proposals = [store.getProposal(target)].filter(Boolean);
-  }
-  if (proposals.length === 0) return err(`没有可采纳的提案：${target}`);
-  const lines = [];
-  for (const p of proposals) {
-    try {
-      const result = adoptProposal(cfg, store, p);
-      lines.push(`✅ ${p.id} [${p.kind}] → ${result.target}${result.backedUp ? "（原文件已备份 .bak）" : ""}`);
-    } catch (error) {
-      lines.push(`❌ ${p.id}：${String(error?.message ?? error)}`);
-    }
-  }
-  if (skippedLines.length > 0) lines.push("", "去重：以下重复提案已跳过：", ...skippedLines);
-  return ok(lines.join("\n"));
+  const result = createActionService({ store, cfg }).adopt({ target, actor: "command:adopt" });
+  return result.ok ? ok(result.message) : err(result.message);
 }
 
 // ---------------------------------------------------------------------------
