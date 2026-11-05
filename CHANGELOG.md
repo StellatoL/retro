@@ -6,7 +6,9 @@
 - store 升级为 v2：`meta.schemaVersion` 与单调递增 `meta.rev`；旧文件首次加载自动备份 `store.v1.bak.json` 再原地升级，旧字段全部保留。
 - 配置支持分组点号键（`security.enableWriteApi` 等），写接口与全库笔记预览默认关闭。
 - `util.js` 新增 `patchMarkdownSections`：按二级标题局部替换卡片正文，保留用户手写章节。
-- 新增 18 项单测（store v2 迁移、并发锁、笔记作用域、Markdown 合并、分组配置）。
+- 新增动作服务层 `lib/actions.js`，`/retro` 三组写入命令改为薄适配器，行为与审计完全一致。
+- 新增只读查询层 `lib/query.js` 与 `GET /retro/detail`：快照支持 `sinceRev` 轻量响应、状态过滤、关键字搜索与游标分页；详情返回卡片/提案/条目/白名单笔记。
+- 新增 25 项单测（store v2 迁移、并发锁、笔记作用域、Markdown 合并、分组配置、动作服务、读取端点）。
 
 ## 0.5.0 — 2026-11-05
 

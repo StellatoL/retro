@@ -9,7 +9,7 @@ import { registerCommands } from "./commands.js";
 import { registerTools } from "./tools.js";
 import { ensureDirs } from "./settler.js";
 import { ensureSkillFiles } from "./evolvor.js";
-import { registerPanelApi } from "./api.js";
+import { registerPanelApi, registerDetailApi } from "./api.js";
 
 const name = "retro";
 const inject = ["commands", "llm", "sessionQuery", "tools"];
@@ -39,9 +39,10 @@ function apply(ctx, config) {
     registerCommands(ctx, store, cfg);
     registerTools(ctx, store, cfg);
 
-    // webServer 存在时提供只读面板 API。
+    // webServer 存在时提供只读面板与详情 API。
     try {
       registerPanelApi(ctx, store, cfg);
+      registerDetailApi(ctx, store, cfg);
     } catch (error) {
       ctx.logger?.warn?.(`[retro] 面板 API 注册失败：${String(error?.message ?? error)}`);
     }

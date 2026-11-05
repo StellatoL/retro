@@ -27,6 +27,17 @@ export function bundledSkillPath() {
 }
 
 /**
+ * 解析提案的采纳目标文件（供采纳写入与面板 Diff 预览共用同一判断）。
+ * @param {"skill"|"agents"|string} kind - 提案类型。
+ * @returns {{ path: string, kind: string } | null} 目标文件绝对路径；未知类型返回 null。
+ */
+export function proposalTarget(kind) {
+  if (kind === "skill") return { path: path.join(skillsDir(), "SKILL.md"), kind };
+  if (kind === "agents") return { path: globalAgentsPath(), kind };
+  return null;
+}
+
+/**
  * 首次运行时，将配套 retro-writing 技能安装到 DSH 技能目录。
  * 已存在的技能文件保持原样。
  */
