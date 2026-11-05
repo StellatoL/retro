@@ -473,6 +473,11 @@ window.__ModuleLoader__.load({
       }
       function patch(next) {
         state = { ...state, ...next };
+        if (state.snapshot?.stats) {
+          // 同步角标缓存：图标组件无 hooks，只能读取这份模块级数字。
+          badgeStats.drafted = state.snapshot.stats.draftedCards ?? 0;
+          badgeStats.proposals = state.snapshot.stats.pendingProposals ?? 0;
+        }
         emit();
       }
 
@@ -573,6 +578,9 @@ window.__ModuleLoader__.load({
         }
       };
     }
+
+    /** 侧边栏角标的模块级缓存：由数据层刷新时更新，供无 hooks 的图标组件读取。 */
+    var badgeStats = { drafted: 0, proposals: 0 };
 
     /** 订阅数据仓的 Hook。 */
     function useData(store) {
@@ -1117,11 +1125,12 @@ window.__ModuleLoader__.load({
       var store = createDataStore();
       var disposed = false;
 
+      // 侧边栏图标：刻意不使用 hooks —— 入口必须先出现，角标是次要信息。
+      // 角标数字来自模块级缓存（数据层每次刷新时写入），宿主重渲染时自然更新。
+      badgeStats = { drafted: 0, proposals: 0 };
       function SidebarIcon(props) {
-        var state = useData(store);
-        // 角标数字来自快照：待审卡片 + 待采纳提案。
-        var count = (state.snapshot?.stats?.draftedCards ?? 0) + (state.snapshot?.stats?.pendingProposals ?? 0);
-        return h(RetroIcon, { size: props?.size, active: props?.active, badge: count });
+        var badge = badgeStats.drafted + badgeStats.proposals;
+        return h(RetroIcon, { size: props?.size, active: props?.active, badge });
       }
 
       function PanelBody() {
