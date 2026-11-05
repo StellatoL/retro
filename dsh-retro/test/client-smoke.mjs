@@ -405,6 +405,35 @@ test("洞察条展示采纳率，Ctrl+K 打开命令面板并可切换视图", a
   assert.equal((documentListeners.get("keydown") ?? []).length, 0, "卸载时必须移除快捷键监听");
 });
 
+test("界面文案随浏览器语言切换英文", async (t) => {
+  created.length = 0;
+  writeApiEnabled = false;
+  Object.defineProperty(globalThis.navigator, "language", { value: "en-US", configurable: true });
+  t.after(() => Object.defineProperty(globalThis.navigator, "language", { value: undefined, configurable: true }));
+  const registered = [];
+  const slots = {
+    inject(key, cb) { cb(); },
+    register(spec, component) { registered.push({ spec, component }); return () => {}; }
+  };
+  const ctx = startClient(t, { slots });
+  await wait(10);
+  const main = registered.find((row) => row.spec.name === "main");
+
+  let tree = expand({ type: main.component, props: {}, children: [] });
+  const tabsText = findByClass(tree, "dsh-retro-tab").map((node) => textOf(node)).join("|");
+  assert.ok(tabsText.includes("Cards") && tabsText.includes("Experience"), `tabs 应为英文，实际：${tabsText}`);
+  assert.ok(textOf(tree).includes("Adoption 100%"), "洞察条应为英文");
+
+  const rows = findByClass(tree, "dsh-retro-row");
+  await rows[0].props.onClick();
+  await wait(10);
+  tree = expand({ type: main.component, props: {}, children: [] });
+  const buttons = findByClass(tree, "dsh-retro-btn").map((node) => textOf(node));
+  assert.ok(buttons.includes("Copy keep command"), `应出现英文按钮，实际：${buttons.join("|")}`);
+  assert.ok(buttons.includes("Open in Obsidian"));
+  ctx._dispose();
+});
+
 test("提案视图展示追加 Diff，并可批量采纳", async (t) => {
   created.length = 0;
   fetched = [];

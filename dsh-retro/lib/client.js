@@ -23,15 +23,174 @@ window.__ModuleLoader__.load({
     var POLL_VISIBLE_MS = 15000;
     var POLL_HIDDEN_MS = 60000;
     var PAGE_LIMIT = 50;
-    // 面板视图：卡片/提案走队列，其余走 resource 列表。
+    // 面板视图：卡片/提案走队列，其余走 resource 列表。labelKey 供中英文词条表解析。
     var VIEWS = [
-      { key: "cards", label: "卡片" },
-      { key: "proposals", label: "提案" },
-      { key: "materials", label: "素材" },
-      { key: "weekly", label: "周报" },
-      { key: "blog", label: "博客" },
-      { key: "entries", label: "经验库" }
+      { key: "cards", labelKey: "view.cards" },
+      { key: "proposals", labelKey: "view.proposals" },
+      { key: "materials", labelKey: "view.materials" },
+      { key: "weekly", labelKey: "view.weekly" },
+      { key: "blog", labelKey: "view.blog" },
+      { key: "entries", labelKey: "view.entries" }
     ];
+
+    // ---------------------------------------------------------------------
+    // [1.5] 界面文案：中英双词典；按浏览器语言惰性选择（测试可切换）
+    // ---------------------------------------------------------------------
+    var TEXT_ZH = {
+      "view.cards": "卡片",
+      "view.proposals": "提案",
+      "view.materials": "素材",
+      "view.weekly": "周报",
+      "view.blog": "博客",
+      "view.entries": "经验库",
+      "kind.retro": "复盘",
+      "tab.list": "视图",
+      "filter.searchPlaceholder": "搜索标题或内容…",
+      "filter.drafted": "待审",
+      "filter.approved": "已落库",
+      "filter.discarded": "已丢弃",
+      "filter.all": "全部",
+      "action.batchAdopt": "批量采纳 {count}",
+      "action.adopting": "采纳中…",
+      "transport.polling": "轮询模式",
+      "transport.sse": "实时推送",
+      "transport.pending": "连接中",
+      "insight.rate": "采纳率 {rate}%",
+      "insight.funnel": "素材 {captured} → 卡片 {cards} → 落库 {approved}",
+      "state.loading": "加载中…",
+      "state.unavailable": "面板数据不可用：{message}",
+      "state.retry": "重试",
+      "state.emptyCards": "没有符合条件的卡片。可在会话中运行 /retro draft today 生成。",
+      "state.emptyProposals": "没有待采纳提案。",
+      "state.detailFailed": "详情加载失败：{message}",
+      "state.noChanges": "没有可保存的修改",
+      "detail.close": "关闭",
+      "detail.actions": "行动项",
+      "detail.lessons": "关键经验",
+      "detail.saving": "保存中…",
+      "detail.save": "保存修改到暂存区",
+      "detail.target": "目标文件：{path}",
+      "detail.targetUnknown": "（未知类型）",
+      "detail.targetMissing": "目标文件尚不存在，采纳时会新建",
+      "detail.duplicate": "⚠️ 与 {id}「{title}」相似度 {similarity}",
+      "detail.previewHeading": "将追加的内容",
+      "detail.blogMeta": "slug：{slug} · {state}",
+      "detail.blogDraft": "草稿",
+      "detail.blogPublished": "已发布",
+      "detail.blogReady": "预检通过：可以发布",
+      "detail.blogBlocked": "预检未通过：缺失 {count} 个本地图片",
+      "action.copyKeep": "复制落库命令",
+      "action.copyDiscard": "复制丢弃命令",
+      "action.openObsidian": "在 Obsidian 打开",
+      "action.confirmKeep": "确认落库",
+      "action.submitting": "提交中…",
+      "action.discard": "丢弃",
+      "action.copyPublish": "复制发布命令",
+      "action.copyEntryKeep": "复制沉淀命令",
+      "action.adoptCurrent": "采纳此提案",
+      "action.copyAdopt": "复制采纳命令",
+      "action.copyDiscardDuplicate": "复制丢弃重复项",
+      "palette.label": "复盘命令面板",
+      "palette.placeholder": "搜索或跳转…（Esc 关闭）",
+      "palette.switchView": "切换到 {label}",
+      "toast.copied": "已复制： {text}",
+      "toast.copyFailed": "复制失败（浏览器限制）",
+      "toast.opened": "已在 Obsidian 中打开",
+      "toast.writeDisabled": "写接口未开启，已改用命令方式",
+      "toast.writeDisabledSave": "写接口未开启：请复制命令后在会话中执行",
+      "toast.failed": "操作失败：{message}",
+      "toast.done": "操作已完成",
+      "toast.saved": "已保存到暂存区",
+      "toast.adopted": "已采纳",
+      "toast.noLayout": "当前宿主不支持切换面板，请使用左侧栏「复盘」入口"
+    };
+
+    var TEXT_EN = {
+      "view.cards": "Cards",
+      "view.proposals": "Proposals",
+      "view.materials": "Materials",
+      "view.weekly": "Weekly",
+      "view.blog": "Blog",
+      "view.entries": "Experience",
+      "kind.retro": "Retro",
+      "tab.list": "Views",
+      "filter.searchPlaceholder": "Search title or content…",
+      "filter.drafted": "Drafted",
+      "filter.approved": "Approved",
+      "filter.discarded": "Discarded",
+      "filter.all": "All",
+      "action.batchAdopt": "Adopt {count}",
+      "action.adopting": "Adopting…",
+      "transport.polling": "Polling",
+      "transport.sse": "Live",
+      "transport.pending": "Connecting",
+      "insight.rate": "Adoption {rate}%",
+      "insight.funnel": "Materials {captured} → Cards {cards} → Saved {approved}",
+      "state.loading": "Loading…",
+      "state.unavailable": "Panel data unavailable: {message}",
+      "state.retry": "Retry",
+      "state.emptyCards": "No matching cards. Run /retro draft today in a session to create one.",
+      "state.emptyProposals": "No pending proposals.",
+      "state.detailFailed": "Failed to load detail: {message}",
+      "state.noChanges": "Nothing to save",
+      "detail.close": "Close",
+      "detail.actions": "Action items",
+      "detail.lessons": "Key lessons",
+      "detail.saving": "Saving…",
+      "detail.save": "Save to staging",
+      "detail.target": "Target file: {path}",
+      "detail.targetUnknown": "(unknown kind)",
+      "detail.targetMissing": "Target file does not exist yet; adopting will create it",
+      "detail.duplicate": "⚠️ Similar to {id} “{title}” ({similarity})",
+      "detail.previewHeading": "Will be appended",
+      "detail.blogMeta": "slug: {slug} · {state}",
+      "detail.blogDraft": "draft",
+      "detail.blogPublished": "published",
+      "detail.blogReady": "Checks passed: ready to publish",
+      "detail.blogBlocked": "Checks failed: {count} local image(s) missing",
+      "action.copyKeep": "Copy keep command",
+      "action.copyDiscard": "Copy discard command",
+      "action.openObsidian": "Open in Obsidian",
+      "action.confirmKeep": "Keep",
+      "action.submitting": "Submitting…",
+      "action.discard": "Discard",
+      "action.copyPublish": "Copy publish command",
+      "action.copyEntryKeep": "Copy promote command",
+      "action.adoptCurrent": "Adopt proposal",
+      "action.copyAdopt": "Copy adopt command",
+      "action.copyDiscardDuplicate": "Copy discard-duplicate",
+      "palette.label": "Retro command palette",
+      "palette.placeholder": "Search or jump… (Esc to close)",
+      "palette.switchView": "Switch to {label}",
+      "toast.copied": "Copied: {text}",
+      "toast.copyFailed": "Copy failed (browser restriction)",
+      "toast.opened": "Opened in Obsidian",
+      "toast.writeDisabled": "Write API disabled; use the copy command instead",
+      "toast.writeDisabledSave": "Write API disabled: copy the command and run it in a session",
+      "toast.failed": "Action failed: {message}",
+      "toast.done": "Done",
+      "toast.saved": "Saved to staging",
+      "toast.adopted": "Adopted",
+      "toast.noLayout": "This host cannot switch panels; use the sidebar entry"
+    };
+
+    /** 当前界面语言：浏览器语言以 zh 开头时用中文，其余用英文；缺失时回落中文。 */
+    function currentLang() {
+      try {
+        var lang = typeof navigator !== "undefined" ? (navigator.language || (navigator.languages && navigator.languages[0])) : "";
+        return String(lang || "zh").toLowerCase().startsWith("zh") ? "zh" : "en";
+      } catch {
+        return "zh";
+      }
+    }
+
+    /** 词条查找并替换 {name} 占位符；缺失时回落到中文词条再回落到 key。 */
+    function t(key, params) {
+      var dict = currentLang() === "en" ? TEXT_EN : TEXT_ZH;
+      var template = dict[key] ?? TEXT_ZH[key] ?? key;
+      if (!params) return template;
+      return template.replace(/\{(\w+)\}/g, (match, name) => (params[name] === undefined ? match : String(params[name])));
+    }
 
     // ---------------------------------------------------------------------
     // [1] 样式：只使用宿主 --dsw-alias-* 语义 token，不写死颜色
@@ -271,8 +430,8 @@ window.__ModuleLoader__.load({
     function copyText(text, toast) {
       if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
         navigator.clipboard.writeText(text).then(
-          () => toast.show(`已复制： ${text}`),
-          () => toast.show("复制失败（浏览器限制）")
+          () => toast.show(t("toast.copied", { text })),
+          () => toast.show(t("toast.copyFailed"))
         );
         return;
       }
@@ -283,16 +442,16 @@ window.__ModuleLoader__.load({
         ta.select();
         document.execCommand("copy");
         ta.remove();
-        toast.show(`已复制： ${text}`);
+        toast.show(t("toast.copied", { text }));
       } catch {
-        toast.show("复制失败（浏览器限制）");
+        toast.show(t("toast.copyFailed"));
       }
     }
 
     function openObsidian(note, vaultName, toast) {
       if (!note || !vaultName || typeof window === "undefined") return;
       window.open(`obsidian://open?vault=${encodeURIComponent(vaultName)}&file=${encodeURIComponent(note)}`, "_blank");
-      toast.show("已在 Obsidian 中打开");
+      toast.show(t("toast.opened"));
     }
 
     /** 创建插件级数据仓：快照、详情缓存、SSE/轮询与订阅。 */
@@ -537,13 +696,13 @@ window.__ModuleLoader__.load({
           });
           var body = await res.json();
           if (!res.ok || body.ok === false) {
-            toast.show(`操作失败：${body?.error?.message ?? `HTTP ${res.status}`}`);
+            toast.show(t("toast.failed", { message: body?.error?.message ?? `HTTP ${res.status}` }));
             return null;
           }
           store.loadSnapshot({});
           return body;
         } catch (error) {
-          toast.show(`操作失败：${String(error?.message ?? error)}`);
+          toast.show(t("toast.failed", { message: String(error?.message ?? error) }));
           return null;
         } finally {
           setBusy(false);
@@ -553,7 +712,7 @@ window.__ModuleLoader__.load({
       async function submitAction(subAction) {
         if (!selected) return;
         if (!writeApiEnabled) {
-          toast.show("写接口未开启，已改用命令方式");
+          toast.show(t("toast.writeDisabled"));
           return;
         }
         var detail = store.getDetail(selected.type, selected.id);
@@ -565,7 +724,7 @@ window.__ModuleLoader__.load({
           instruction: drafts.instruction || null
         });
         if (!body) return;
-        toast.show(body.result?.message ?? "操作已完成");
+        toast.show(body.result?.message ?? t("toast.done"));
         setSelected(null);
       }
 
@@ -573,7 +732,7 @@ window.__ModuleLoader__.load({
       async function saveEdits() {
         if (!selected || selected.type !== "card") return;
         if (!writeApiEnabled) {
-          toast.show("写接口未开启：请复制命令后在会话中执行");
+          toast.show(t("toast.writeDisabledSave"));
           return;
         }
         var detail = store.getDetail("card", selected.id);
@@ -581,7 +740,7 @@ window.__ModuleLoader__.load({
         if (edits.actions.trim()) sections.actions = edits.actions;
         if (edits.lessons.trim()) sections.lessons = edits.lessons;
         if (Object.keys(sections).length === 0) {
-          toast.show("没有可保存的修改");
+          toast.show(t("state.noChanges"));
           return;
         }
         var body = await postAction({
@@ -591,7 +750,7 @@ window.__ModuleLoader__.load({
           sections
         });
         if (!body) return;
-        toast.show(body.result?.message ?? "已保存到暂存区");
+        toast.show(body.result?.message ?? t("toast.saved"));
         await store.loadDetail("card", selected.id);
       }
 
@@ -604,7 +763,7 @@ window.__ModuleLoader__.load({
         }
         var body = await postAction({ action: "proposal.adopt", ids: chosen });
         if (!body) return;
-        toast.show(body.result?.message ?? "已采纳");
+        toast.show(body.result?.message ?? t("toast.adopted"));
         setChosen([]);
         setSelected(null);
       }
@@ -618,7 +777,7 @@ window.__ModuleLoader__.load({
         }
         var body = await postAction({ action: "proposal.adopt", ids: [selected.id] });
         if (!body) return;
-        toast.show(body.result?.message ?? "已采纳");
+        toast.show(body.result?.message ?? t("toast.adopted"));
         setSelected(null);
       }
 
@@ -646,20 +805,20 @@ window.__ModuleLoader__.load({
           "aria-selected": String(view === entry.key),
           "data-active": String(view === entry.key),
           onClick: () => { setView(entry.key); setSelected(null); }
-        }, entry.label))),
+        }, t(entry.labelKey)))),
         view === "cards" ? h("select", {
           className: "dsh-retro-select",
           value: filter.status,
           onChange: (event) => setFilter({ ...filter, status: event.target.value })
         },
-          h("option", { value: "drafted" }, "待审"),
-          h("option", { value: "approved" }, "已落库"),
-          h("option", { value: "discarded" }, "已丢弃"),
-          h("option", { value: "" }, "全部")
+          h("option", { value: "drafted" }, t("filter.drafted")),
+          h("option", { value: "approved" }, t("filter.approved")),
+          h("option", { value: "discarded" }, t("filter.discarded")),
+          h("option", { value: "" }, t("filter.all"))
         ) : null,
         view === "cards" ? h("input", {
           className: "dsh-retro-input",
-          placeholder: "搜索标题或内容…",
+          placeholder: t("filter.searchPlaceholder"),
           value: filter.q,
           onChange: (event) => setFilter({ ...filter, q: event.target.value })
         }) : null,
@@ -667,30 +826,35 @@ window.__ModuleLoader__.load({
           ? h("button", {
             className: "dsh-retro-btn", "data-kind": "primary", disabled: busy,
             onClick: () => adoptChosen()
-          }, busy ? "采纳中…" : `批量采纳 ${chosen.length}`)
+          }, busy ? t("action.adopting") : t("action.batchAdopt", { count: chosen.length }))
           : null,
-        state.transport === "polling" ? h("span", { className: "dsh-retro-mono" }, "轮询模式") : null
+        state.transport === "polling" ? h("span", { className: "dsh-retro-mono" }, t("transport.polling")) : null
       );
 
       // 洞察条：漏斗与传输模式（数据来自 snapshot.insights，不影响 0.5.0 的 stats）
       var insights = snapshot?.insights;
       var insightsStrip = insights
         ? h("div", { className: "dsh-retro-toolbar", role: "status" },
-          h("span", { className: "dsh-retro-mono" }, `采纳率 ${Math.round((insights.funnel?.adoptionRate ?? 0) * 100)}%`),
-          h("span", { className: "dsh-retro-mono" }, `素材 ${insights.funnel?.captured ?? 0} → 卡片 ${insights.funnel?.cards ?? 0} → 落库 ${insights.funnel?.approved ?? 0}`),
-          h("span", { className: "dsh-retro-mono" }, state.transport === "sse" ? "实时推送" : state.transport === "polling" ? "轮询模式" : "连接中")
+          h("span", { className: "dsh-retro-mono" }, t("insight.rate", { rate: Math.round((insights.funnel?.adoptionRate ?? 0) * 100) })),
+          h("span", { className: "dsh-retro-mono" }, t("insight.funnel", {
+            captured: insights.funnel?.captured ?? 0,
+            cards: insights.funnel?.cards ?? 0,
+            approved: insights.funnel?.approved ?? 0
+          })),
+          h("span", { className: "dsh-retro-mono" },
+            state.transport === "sse" ? t("transport.sse") : state.transport === "polling" ? t("transport.polling") : t("transport.pending"))
         )
         : null;
 
       var listBody;
       if (state.loading && !snapshot) {
-        listBody = h("div", { className: "dsh-retro-empty" }, "加载中…");
+        listBody = h("div", { className: "dsh-retro-empty" }, t("state.loading"));
       } else if (state.error) {
-        listBody = h("div", { className: "dsh-retro-empty" }, `面板数据不可用：${state.error}`,
-          h("button", { className: "dsh-retro-btn", onClick: () => store.loadSnapshot({}) }, "重试"));
+        listBody = h("div", { className: "dsh-retro-empty" }, t("state.unavailable", { message: state.error }),
+          h("button", { className: "dsh-retro-btn", onClick: () => store.loadSnapshot({}) }, t("state.retry")));
       } else if (rows.length === 0) {
         listBody = h("div", { className: "dsh-retro-empty" },
-          view === "cards" ? "没有符合条件的卡片。可在会话中运行 /retro draft today 生成。" : "没有待采纳提案。");
+          view === "cards" ? t("state.emptyCards") : t("state.emptyProposals"));
       } else {
         // 键盘可达：j/k 或方向键移动，Enter 打开详情；容器可聚焦。
         function onRowsKeyDown(event) {
@@ -751,18 +915,23 @@ window.__ModuleLoader__.load({
           h("div", { className: "dsh-retro-detail-head" },
             h("span", { className: "dsh-retro-mono" }, selected.id),
             h("span", { className: "dsh-retro-row-title" }, detail?.meta?.title ?? ""),
-            h("button", { className: "dsh-retro-btn", onClick: () => setSelected(null) }, "关闭")
+            h("button", { className: "dsh-retro-btn", onClick: () => setSelected(null) }, t("detail.close"))
           ),
           h("div", { className: "dsh-retro-detail-body" },
             detail?.error
-              ? h("div", { className: "dsh-retro-empty" }, `详情加载失败：${detail.error}`)
+              ? h("div", { className: "dsh-retro-empty" }, t("state.detailFailed", { message: detail.error }))
               : !detail
-                ? h("div", { className: "dsh-retro-empty" }, "加载中…")
+                ? h("div", { className: "dsh-retro-empty" }, t("state.loading"))
                 : h("div", null,
                   selected.type === "blog"
                     ? h("div", null,
-                      h("p", { className: "dsh-retro-mono" }, `slug：${detail.meta?.slug} · ${detail.meta?.draft ? "草稿" : "已发布"}`),
-                      h("p", { className: "dsh-retro-mono" }, detail.checks?.ready ? "预检通过：可以发布" : `预检未通过：缺失 ${detail.checks?.missingImages?.length ?? 0} 个本地图片`),
+                      h("p", { className: "dsh-retro-mono" }, t("detail.blogMeta", {
+                        slug: detail.meta?.slug,
+                        state: detail.meta?.draft ? t("detail.blogDraft") : t("detail.blogPublished")
+                      })),
+                      h("p", { className: "dsh-retro-mono" }, detail.checks?.ready
+                        ? t("detail.blogReady")
+                        : t("detail.blogBlocked", { count: detail.checks?.missingImages?.length ?? 0 })),
                       (detail.checks?.missingImages ?? []).length > 0
                         ? h("ul", null, detail.checks.missingImages.map((ref, index) => h("li", { key: index, className: "dsh-retro-mono" }, ref)))
                         : null,
@@ -772,15 +941,18 @@ window.__ModuleLoader__.load({
                       ? h("div", null, h(Markdown, { text: detail.rawMarkdown ?? "" }))
                       : selected.type === "proposal"
                     ? h("div", null,
-                      h("p", { className: "dsh-retro-mono" }, `目标文件：${detail.meta?.targetFile ?? "（未知类型）"}`),
+                      h("p", { className: "dsh-retro-mono" }, t("detail.target", { path: detail.meta?.targetFile ?? t("detail.targetUnknown") })),
                       detail.meta?.targetExists === false
-                        ? h("p", { className: "dsh-retro-mono" }, "目标文件尚不存在，采纳时会新建")
+                        ? h("p", { className: "dsh-retro-mono" }, t("detail.targetMissing"))
                         : null,
                       detail.meta?.duplicateOf
-                        ? h("p", { className: "dsh-retro-mono" },
-                          `⚠️ 与 ${detail.meta.duplicateOf.id}「${detail.meta.duplicateOf.title}」相似度 ${detail.meta.duplicateOf.similarity}`)
+                        ? h("p", { className: "dsh-retro-mono" }, t("detail.duplicate", {
+                          id: detail.meta.duplicateOf.id,
+                          title: detail.meta.duplicateOf.title,
+                          similarity: detail.meta.duplicateOf.similarity
+                        }))
                         : null,
-                      h("h2", null, "将追加的内容"),
+                      h("h2", null, t("detail.previewHeading")),
                       (detail.preview?.existingTail?.length ?? 0) > 0
                         ? h("pre", { className: "dsh-retro-mono" }, detail.preview.existingTail.join("\n"))
                         : null,
@@ -791,12 +963,12 @@ window.__ModuleLoader__.load({
                       h(Markdown, { text: detail.rawMarkdown ?? "" }),
                       writeApiEnabled
                         ? h("div", null,
-                          h("label", { className: "dsh-retro-field" }, "行动项",
+                          h("label", { className: "dsh-retro-field" }, t("detail.actions"),
                             h("textarea", {
                               value: edits.actions,
                               onChange: (event) => setEdits({ ...edits, actions: event.target.value })
                             })),
-                          h("label", { className: "dsh-retro-field" }, "关键经验",
+                          h("label", { className: "dsh-retro-field" }, t("detail.lessons"),
                             h("textarea", {
                               value: edits.lessons,
                               onChange: (event) => setEdits({ ...edits, lessons: event.target.value })
@@ -804,7 +976,7 @@ window.__ModuleLoader__.load({
                           h("button", {
                             className: "dsh-retro-btn", disabled: busy,
                             onClick: () => saveEdits()
-                          }, busy ? "保存中…" : "保存修改到暂存区")
+                          }, busy ? t("detail.saving") : t("detail.save"))
                         )
                         : null
                     )
@@ -815,52 +987,52 @@ window.__ModuleLoader__.load({
               h("button", {
                 className: "dsh-retro-btn",
                 onClick: () => copyText(`/blog publish ${selected.id}`, toast)
-              }, "复制发布命令"))
+              }, t("action.copyPublish")))
             : selected.type === "entry"
               ? h("div", { className: "dsh-retro-detail-foot" },
                 h("button", {
                   className: "dsh-retro-btn",
                   onClick: () => copyText(`/retro entry keep ${selected.id}`, toast)
-                }, "复制沉淀命令"))
+                }, t("action.copyEntryKeep")))
               : selected.type === "card"
             ? h("div", { className: "dsh-retro-detail-foot" },
               h("button", {
                 className: "dsh-retro-btn",
                 onClick: () => copyText(`/retro review ${selected.id} keep`, toast)
-              }, "复制落库命令"),
+              }, t("action.copyKeep")),
               h("button", {
                 className: "dsh-retro-btn",
                 onClick: () => copyText(`/retro review ${selected.id} discard`, toast)
-              }, "复制丢弃命令"),
+              }, t("action.copyDiscard")),
               detail?.meta?.note
                 ? h("button", {
                   className: "dsh-retro-btn",
                   onClick: () => openObsidian(detail.meta.note, snapshot?.vaultName, toast)
-                }, "在 Obsidian 打开")
+                }, t("action.openObsidian"))
                 : null,
               writeApiEnabled
                 ? h("button", {
                   className: "dsh-retro-btn", "data-kind": "primary", disabled: busy,
                   onClick: () => submitAction("keep")
-                }, busy ? "提交中…" : "确认落库")
+                }, busy ? t("action.submitting") : t("action.confirmKeep"))
                 : null,
               writeApiEnabled
                 ? h("button", {
                   className: "dsh-retro-btn", "data-kind": "danger", disabled: busy,
                   onClick: () => submitAction("discard")
-                }, "丢弃")
+                }, t("action.discard"))
                 : null
             )
             : h("div", { className: "dsh-retro-detail-foot" },
               h("button", {
                 className: "dsh-retro-btn",
                 onClick: adoptCurrent
-              }, writeApiEnabled ? "采纳此提案" : "复制采纳命令"),
+              }, writeApiEnabled ? t("action.adoptCurrent") : t("action.copyAdopt")),
               detail?.meta?.duplicateOf
                 ? h("button", {
                   className: "dsh-retro-btn",
                   onClick: () => copyText(`/retro review ${detail.meta.duplicateOf.id} discard`, toast)
-                }, "复制丢弃重复项")
+                }, t("action.copyDiscardDuplicate"))
                 : null
             )
         );
@@ -872,7 +1044,7 @@ window.__ModuleLoader__.load({
         var query = paletteQuery.trim().toLowerCase();
         var commands = VIEWS.map((entry) => ({
           key: `view-${entry.key}`,
-          label: `切换到 ${entry.label}`,
+          label: t("palette.switchView", { label: t(entry.labelKey) }),
           run: () => { setView(entry.key); setSelected(null); setPaletteOpen(false); }
         }));
         for (const row of rows.slice(0, 30)) {
@@ -885,10 +1057,10 @@ window.__ModuleLoader__.load({
         var visible = commands
           .filter((command) => !query || command.label.toLowerCase().includes(query))
           .slice(0, 12);
-        paletteNode = h("div", { className: "dsh-retro-palette", role: "dialog", "aria-modal": "true", "aria-label": "复盘命令面板" },
+        paletteNode = h("div", { className: "dsh-retro-palette", role: "dialog", "aria-modal": "true", "aria-label": t("palette.label") },
           h("input", {
             className: "dsh-retro-input",
-            placeholder: "搜索或跳转…（Esc 关闭）",
+            placeholder: t("palette.placeholder"),
             value: paletteQuery,
             onChange: (event) => setPaletteQuery(event.target.value)
           }),
@@ -942,13 +1114,13 @@ window.__ModuleLoader__.load({
         if (disposed || fab) return;
         fab = document.createElement("button");
         fab.className = "dsh-retro-fab";
-        fab.textContent = "复盘";
-        fab.title = "dsh-retro 复盘面板";
+        fab.textContent = t("kind.retro");
+        fab.title = `dsh-retro ${t("kind.retro")}`;
         fab.addEventListener("click", () => {
           // 浮动入口只负责把宿主切换到本插件的主面板，不另建 DOM 面板。
           var layout = ctx.get?.("layout");
           if (layout?.selectPanel) layout.selectPanel(PANEL_ID);
-          else toast.show("当前宿主不支持切换面板，请使用左侧栏「复盘」入口");
+          else toast.show(t("toast.noLayout"));
         });
         document.body.appendChild(fab);
       }
@@ -979,7 +1151,7 @@ window.__ModuleLoader__.load({
                 name: "sidebar.panellist",
                 id: PANEL_ID,
                 order: 5,
-                label: function () { return "复盘"; }
+                label: function () { return t("kind.retro"); }
               }, SidebarIcon);
               iconRegistered = true;
               maybeUnmountFab();
