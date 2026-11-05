@@ -2,14 +2,14 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { DEFAULTS } from "../lib/config.js";
 import { ensureDirs, draftCardFiles, readStaging } from "../lib/settler.js";
 import { RetroStore } from "../lib/store.js";
 import { computeContentHash } from "../lib/guard.js";
-import { registerActionApi, registerEventsApi } from "../lib/api.js";
+import { registerActionApi, registerEventsApi, registerClientDiagnosticsApi } from "../lib/api.js";
 
 function harness(t, { enableWriteApi = false } = {}) {
   const dir = mkdtempSync(path.join(os.tmpdir(), "retro-write-"));
@@ -122,6 +122,30 @@ test("非白名单动作与非 POST 方法被拒绝", async (t) => {
   await holder.route.handler(jsonRequest({ action: "blog.publish", slug: "x" }), notAllowed);
   assert.equal(notAllowed.status, 400);
   assert.equal(JSON.parse(notAllowed.body).error.code, "RETRO_ACTION_NOT_ALLOWED");
+
+  const wrongMethod = captureResponse();
+  const req = jsonRequest(undefined, "GET");
+  await holder.route.handler(req, wrongMethod);
+  assert.equal(wrongMethod.status, 405);
+  assert.equal(wrongMethod.headers.allow, "POST");
+});
+
+test("客户端诊断上报写入 client-diag.log，且不受写接口开关影响", async (t) => {
+  const { cfg, store, dir, vault } = harness(t);
+  const { ctx, holder } = captureRoute();
+  registerClientDiagnosticsApi(ctx, cfg, { retroHome: path.join(dir, "diag") });
+  assert.equal(holder.route.path, "/retro/client-error");
+
+  const res = captureResponse();
+  await holder.route.handler(jsonRequest({ phase: "apply", message: "boom", stack: "at x" }), res);
+  assert.equal(res.status, 200);
+  const log = readFileSync(path.join(dir, "diag", "client-diag.log"), "utf8").trim().split("\n");
+  assert.equal(log.length, 1);
+  const entry = JSON.parse(log[0]);
+  assert.equal(entry.phase, "apply");
+  assert.equal(entry.message, "boom");
+  assert.ok(entry.at);
+  assert.ok(store && vault);
 
   const wrongMethod = captureResponse();
   const req = jsonRequest(undefined, "GET");

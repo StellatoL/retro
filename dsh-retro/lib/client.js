@@ -1211,8 +1211,47 @@ window.__ModuleLoader__.load({
       }, "dsh-retro: client");
     }
 
-    exports.apply = apply;
+    /** 上报浏览器端异常到宿主诊断日志（失败也忽略，绝不影响主流程）。 */
+    function reportClientError(phase, error) {
+      try {
+        fetch("/retro/client-error", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            phase,
+            message: String(error?.message ?? error ?? ""),
+            stack: String(error?.stack ?? "")
+          })
+        }).catch(function () {});
+      } catch { /* 上报失败忽略 */ }
+    }
+
+    /** 带诊断与最小兜底的 apply：主界面构建失败时仍尽量保留侧边栏入口。 */
+    function safeApply(ctx) {
+      try {
+        apply(ctx);
+        reportClientError("apply-ok", null);
+        return;
+      } catch (error) {
+        reportClientError("apply", error);
+        try {
+          var slots = ctx.get?.("slots");
+          slots?.inject?.("sidebar.panellist", function () {
+            return slots.register({
+              name: "sidebar.panellist",
+              id: PANEL_ID,
+              order: 5,
+              label: function () { return t("kind.retro"); }
+            }, function FallbackIcon() {
+              return React.createElement("span", { title: String(error?.message ?? error) }, "!");
+            });
+          });
+        } catch { /* 兜底失败交给宿主记录 */ }
+        throw error;
+      }
+    }
+
+    exports.apply = safeApply;
     exports.inject = [];
-    return module.exports;
-  }
+    return module.exports;  }
 });

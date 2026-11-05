@@ -5,7 +5,9 @@ import { createQueryService } from "./query.js";
 import { RetroError, computeContentHash, withStoreLock } from "./guard.js";
 import { createActionService } from "./actions.js";
 import { readStaging } from "./settler.js";
-import { saveConfig as persistConfig, loadConfig, listWorkspaces } from "./config.js";
+import { saveConfig as persistConfig, loadConfig, listWorkspaces, retroDir } from "./config.js";
+import { appendFile, mkdir } from "node:fs/promises";
+import path from "node:path";
 
 export { renderPanelApi } from "./query.js";
 
@@ -276,6 +278,53 @@ export function registerActionApi(ctx, store, cfg = {}, { lockDir = store.dir } 
         }
       }
     }), "retro.api:/retro/action");
+  });
+}
+
+// ---------------------------------------------------------------------------
+// 客户端自诊断：浏览器端把装载/渲染错误上报到宿主日志。
+// 该路由不写业务数据，只追加一行诊断，因此不受写接口开关限制。
+// ---------------------------------------------------------------------------
+
+/**
+ * 注册客户端诊断上报路由。
+ * @param {object} ctx - 宿主上下文。
+ * @param {{ retroHome?: string }} options - 日志目录，默认 $DSH_HOME/retro。
+ */
+export function registerClientDiagnosticsApi(ctx, cfg = {}, { retroHome = retroDir() } = {}) {
+  const logPath = path.join(retroHome, "client-diag.log");
+  const append = async (line) => {
+    try {
+      await mkdir(retroHome, { recursive: true });
+      await appendFile(logPath, `${line}\n`, "utf8");
+    } catch { /* 诊断写入失败不影响主流程 */ }
+  };
+  return ctx.inject(["webServer"], (childCtx) => {
+    childCtx.effect(() => childCtx.webServer.register({
+      kind: "exact",
+      path: "/retro/client-error",
+      handler: async (req, res) => {
+        if (req.method !== "POST") {
+          res.writeHead(405, { allow: "POST" });
+          res.end();
+          return;
+        }
+        try {
+          const body = await readJsonBody(req, 64 * 1024);
+          const entry = {
+            at: new Date().toISOString(),
+            phase: String(body.phase ?? "unknown").slice(0, 40),
+            message: String(body.message ?? "").slice(0, 500),
+            stack: String(body.stack ?? "").slice(0, 2000),
+            ua: String(req.headers?.["user-agent"] ?? "").slice(0, 200)
+          };
+          await append(JSON.stringify(entry));
+          sendJson(res, 200, { ok: true });
+        } catch (error) {
+          sendJson(res, 400, { ok: false, error: { code: "RETRO_BAD_REQUEST", message: String(error?.message ?? error) } });
+        }
+      }
+    }), "retro.api:/retro/client-error");
   });
 }
 
