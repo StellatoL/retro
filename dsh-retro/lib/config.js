@@ -43,7 +43,11 @@ export const DEFAULTS = {
   storage: {
     archiveRetentionDays: 30,
     stagingGraceHours: 24
-  }
+  },
+  // 多工作区：workspaces 为空时沿用上面的单库配置，行为与旧版本完全一致。
+  // 每项形如 { id, name, vaultPath, blogPath? }；activeWorkspace 为空表示不启用。
+  workspaces: [],
+  activeWorkspace: ""
 };
 
 /** 状态与配置目录：优先使用 DSH_RETRO_DIR，否则使用 DSH_HOME 下的 retro。 */
@@ -84,14 +88,46 @@ function deepMerge(base, overlay) {
   return out;
 }
 
-/** 合并默认值、Cordis 行配置与运行时文件；环境变量仅在相应路径仍为空时补齐。 */
+/** 合并默认值、Cordis 行配置与运行时文件；随后按激活工作区覆盖路径，环境变量只补空值。 */
 export function loadConfig(rowConfig = {}) {
   const file = readFileConfig();
   const merged = deepMerge(deepMerge(DEFAULTS, rowConfig), file);
+  applyActiveWorkspace(merged);
   if (!merged.vaultPath && process.env.DSH_RETRO_VAULT) merged.vaultPath = process.env.DSH_RETRO_VAULT;
   if (!merged.blogPath && process.env.DSH_RETRO_BLOG) merged.blogPath = process.env.DSH_RETRO_BLOG;
   if (!merged.blogBaseUrl && process.env.DSH_RETRO_BLOG_URL) merged.blogBaseUrl = process.env.DSH_RETRO_BLOG_URL;
   return merged;
+}
+
+/**
+ * 按 activeWorkspace 覆盖 vaultPath / blogPath。
+ * 未配置工作区或 id 不存在时不做任何修改，保持单库语义。
+ * @param {object} merged - 已合并的配置对象（原地修改并返回）。
+ */
+export function applyActiveWorkspace(merged) {
+  const list = Array.isArray(merged.workspaces) ? merged.workspaces : [];
+  const activeId = typeof merged.activeWorkspace === "string" ? merged.activeWorkspace.trim() : "";
+  if (!activeId) return merged;
+  const workspace = list.find((item) => item && item.id === activeId);
+  if (!workspace) return merged;
+  if (typeof workspace.vaultPath === "string" && workspace.vaultPath.trim()) merged.vaultPath = workspace.vaultPath;
+  if (typeof workspace.blogPath === "string" && workspace.blogPath.trim()) merged.blogPath = workspace.blogPath;
+  return merged;
+}
+
+/** 列出工作区（供命令与面板展示）；未配置时返回空数组。 */
+export function listWorkspaces(cfg) {
+  const list = Array.isArray(cfg?.workspaces) ? cfg.workspaces : [];
+  const active = typeof cfg?.activeWorkspace === "string" ? cfg.activeWorkspace : "";
+  return list
+    .filter((item) => item && typeof item.id === "string" && item.id)
+    .map((item) => ({
+      id: item.id,
+      name: item.name || item.id,
+      vaultPath: item.vaultPath ?? "",
+      blogPath: item.blogPath ?? "",
+      active: item.id === active
+    }));
 }
 
 /** 按点号路径读取配置，缺失时返回 undefined（支持 security.enableWriteApi 这类分组键）。 */
@@ -127,6 +163,10 @@ export function saveConfig(patch) {
 
 /** 按配置声明的类型解析命令输入，避免把路径、数组和分段长度保存成错误类型。 */
 export function parseConfigValue(key, raw) {
+  // 工作区是结构化配置，统一走 /retro workspace，避免手写 JSON 破坏结构。
+  if (key === "workspaces" || key === "activeWorkspace") {
+    throw new Error("工作区请使用 /retro workspace 命令管理（list / use / add / remove）");
+  }
   const sample = getConfigPath(DEFAULTS, key);
   if (sample === undefined) throw new Error(`未知配置项：${key}`);
   if (Array.isArray(sample)) {
@@ -193,6 +233,8 @@ export function renderConfig(cfg) {
     ["security.requireDoubleConfirm", String(cfg.security?.requireDoubleConfirm)],
     ["storage.archiveRetentionDays", String(cfg.storage?.archiveRetentionDays)],
     ["storage.stagingGraceHours", String(cfg.storage?.stagingGraceHours)],
+    ["activeWorkspace", cfg.activeWorkspace || "（未启用）"],
+    ["workspaces", listWorkspaces(cfg).map((item) => `${item.id}${item.active ? "*" : ""}`).join(", ") || "（未配置）"],
     ["configDir", retroDir()]
   ];
   return rows.map(([k, v]) => `${k}: ${v}`).join("\n");

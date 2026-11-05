@@ -105,6 +105,7 @@ dsh plugin --profile web add .
 | `/retro entry keep <id>` | 经验条目落库并刷新索引 |
 | `/retro adopt <id\|all>` | 将提案中的规则片段追加到技能或全局规则；已有文件备份为 `.bak` |
 | `/retro cleanup` | 删除已丢弃卡片对应的暂存文件，保留状态记录 |
+| `/retro workspace list\|use <id>\|add <id> <名称> <vaultPath> [blogPath]\|remove <id>` | 多工作区管理；未配置时保持单库行为 |
 | `/retro report` | 生成独立 HTML 报告，尝试通过系统默认打开器打开 |
 | `/weekly [--force]` | 最近七天周报；同一天已有待审周报时默认不重复生成 |
 | `/blog list` | 查看博客文章 |

@@ -1,5 +1,13 @@
 # 变更记录
 
+## 0.9.0 — 2026-11-05
+
+- 多工作区（FR-12）：配置新增 `workspaces` 与 `activeWorkspace`，`loadConfig` 合并后按激活项覆盖 `vaultPath`/`blogPath`，未配置时行为与单库完全一致。
+- 新增 `/retro workspace list|use <id>|add <id> <名称> <vaultPath> [blogPath]|remove <id>` 命令；首个工作区自动设为当前，移除当前项回到单库配置。
+- 写接口新增 `workspace.switch`（同样受 `security.enableWriteApi` 约束，不触碰 `security.*` 开关），快照新增 `workspaces` 与 `activeWorkspace` 字段。
+- 客户端工具栏在多工作区时显示工作区选择器，切换后刷新列表与洞察。
+- 新增 5 项后端单测与 1 项客户端冒烟；测试全部隔离到临时 `DSH_RETRO_DIR`，不再读写真实配置。
+
 ## 0.8.0 — 2026-11-05
 
 - 客户端界面支持中英双语：文案集中到 `TEXT_ZH` / `TEXT_EN` 词条表，按浏览器语言惰性切换，`t(key, params)` 支持占位符插值；覆盖视图标签、筛选、按钮、空态/错误态、详情标题、命令面板与提示消息。

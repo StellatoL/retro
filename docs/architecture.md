@@ -1,6 +1,6 @@
 # 当前架构
 
-本文描述 `dsh-retro 0.8.0` 的现有实现。安装、配置与命令说明见 [English README](../README.md) 或[中文 README](../README.zh-CN.md)。
+本文描述 `dsh-retro 0.9.0` 的现有实现。安装、配置与命令说明见 [English README](../README.md) 或[中文 README](../README.zh-CN.md)。
 
 ## 入口与部署
 
@@ -94,6 +94,7 @@ LLM 请求使用 `createUserMessage` 构建内容块数组，经 `ctx.llm.stream
 ## 文件与配置边界
 
 - 配置优先级：默认值 < Cordis 行配置 < 运行时 JSON。三个路径环境变量只填空值。
+- 多工作区：`workspaces`（`{ id, name, vaultPath, blogPath? }`）+ `activeWorkspace`；`loadConfig` 在合并后按激活项覆盖 `vaultPath`/`blogPath`，未配置时行为与单库完全一致。管理工作区走 `/retro workspace`，面板切换走 `POST /retro/action`（`workspace.switch`），该动作与其它写动作一样受 `security.enableWriteApi` 约束，且不会修改任何 `security.*` 开关。
 - 状态默认在 `$DSH_HOME/retro`，`DSH_RETRO_DIR` 可单独覆盖它。
 - 技能和全局规则在 `$DSH_HOME/skills/retro-writing/SKILL.md`、`$DSH_HOME/AGENTS.md`；首次技能安装不会替换已有文件。
 - 暂存逻辑将 `_entries/` 和 `_proposals/` 路由到各自配置根目录，其他草稿进入卡片暂存根目录。
@@ -111,7 +112,7 @@ LLM 请求使用 `createUserMessage` 构建内容块数组，经 `ctx.llm.stream
 
 客户端内容以 `React.createElement` 渲染为节点（Markdown 走内置极简解析器，链接仅放行 `http/https/obsidian/mailto`，其余语法降级为纯文本），不存在 HTML 注入点。界面文案集中在 `TEXT_ZH` / `TEXT_EN` 两张词条表中，按浏览器语言惰性选择（以 `zh` 开头用中文，否则英文，缺失时回落中文），`t(key, params)` 支持 `{name}` 插值。工作台提供六个视图：卡片（服务端过滤 + 游标分页）、提案、素材、周报、博客、经验库；详情按类型走 `GET /retro/detail`。快照新增 `insights`（状态漏斗、按周趋势、LLM 用量）而不改动 `stats` 形态。变更优先走 `GET /retro/events` 推送，15 秒收不到首字节即降级为 `sinceRev` 轮询（可见 15 秒 / 后台 60 秒）。写操作按钮仅在 `security.enableWriteApi` 开启时出现，否则详情栏只提供“复制命令”。`Ctrl/Cmd+K` 提供命令面板，列表支持键盘导航；卸载时关闭事件流、移除全局快捷键监听、清除定时器与样式，并释放槽位注册。
 
-尚未实现（有意延后）：多工作区切换（涉及落库白名单与配置结构迁移，需先定产品口径）、列表虚拟滚动（单页上限 50 条，无需虚拟化）。
+尚未实现（有意延后）：列表虚拟滚动（单页上限 50 条，无需虚拟化）。
 
 HTTP 路由共四条：`GET /retro/api`（快照）、`GET /retro/detail`（详情）、`POST /retro/action`（受控写入，默认关闭）、`GET /retro/events`（SSE 变更流）。只读路由支持 GET/HEAD，其他方法返回 405 与 Allow 头；写路由仅接受 POST。所有响应使用 `Cache-Control: no-store`，错误统一为 `{ ok:false, error:{ code, message, hint, retryable } }`。插件未另建认证：`GET /retro/api` 对本机进程可读，因此写接口默认关闭、只能由 CLI 开启，且仅放行白名单动作。
 

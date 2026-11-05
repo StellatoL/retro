@@ -3,7 +3,7 @@
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { pathToFileURL } from "node:url";
-import { validateConfig, renderConfig, saveConfig as persistConfig, loadConfig, parseConfigValue, getConfigPath, configPath, retroDir } from "./config.js";
+import { validateConfig, renderConfig, saveConfig as persistConfig, loadConfig, parseConfigValue, getConfigPath, listWorkspaces, configPath, retroDir } from "./config.js";
 import { distillSession, distillWeekly } from "./distiller.js";
 import { draftCardFiles, draftEntryFile } from "./settler.js";
 import { draftBlogFromNote, publishBlogPost, captureBlogPosts, listBlogPosts } from "./publisher.js";
@@ -82,7 +82,8 @@ async function runRetro(ctx, store, cfg, invocation) {
     if (sub === "adopt") return runAdopt(ctx, store, cfg, rest);
     if (sub === "report") return runReport(store, cfg, rest);
     if (sub === "cleanup") return runCleanup(store, cfg, rest);
-    return err(`未知子命令 "${sub}"。用法：${invocation.rawInput.length ? "/retro queue" : "/retro [queue|draft|review|entry|config|adopt|report|cleanup]"}`);
+    if (sub === "workspace") return runWorkspace(store, cfg, rest);
+    return err(`未知子命令 "${sub}"。用法：${invocation.rawInput.length ? "/retro queue" : "/retro [queue|draft|review|entry|config|adopt|report|cleanup|workspace]"}`);
   } catch (error) {
     return err(`/retro 失败：${String(error?.message ?? error)}`);
   }
@@ -308,6 +309,56 @@ function runEntry(store, cfg, rest) {
   } catch (error) {
     return err(`沉淀失败：${String(error?.message ?? error)}`);
   }
+}
+
+/**
+ * 多工作区管理：workspaces 为空时沿用单库配置，行为与旧版本一致。
+ * list / use <id> / add <id> <名称> <vaultPath> [blogPath] / remove <id>
+ */
+function runWorkspace(store, cfg, rest) {
+  const [action, ...args] = rest;
+  const list = Array.isArray(cfg.workspaces) ? cfg.workspaces : [];
+
+  if (!action || action === "list") {
+    const rows = listWorkspaces(cfg);
+    if (rows.length === 0) {
+      return ok("当前未配置工作区（使用单库配置）。\n添加：/retro workspace add <id> <名称> <vaultPath> [blogPath]");
+    }
+    const lines = rows.map((item) => `${item.active ? "▶" : " "} ${item.id}（${item.name}）→ ${item.vaultPath}${item.blogPath ? ` ｜ 博客 ${item.blogPath}` : ""}`);
+    return ok([`## 工作区（当前：${cfg.activeWorkspace || "未启用"}）`, ...lines].join("\n"));
+  }
+
+  if (action === "add") {
+    const [id, name, vaultPath, blogPath] = args;
+    if (!id || !name || !vaultPath) return err("用法：/retro workspace add <id> <名称> <vaultPath> [blogPath]");
+    if (list.some((item) => item && item.id === id)) return err(`工作区已存在：${id}（如需修改请先 /retro workspace remove ${id}）`);
+    const next = [...list, { id, name, vaultPath, ...(blogPath ? { blogPath } : {}) }];
+    // 首个工作区自动设为当前，避免"加了但没生效"的困惑。
+    persistConfig({ workspaces: next, activeWorkspace: cfg.activeWorkspace || id });
+    Object.assign(cfg, loadConfig(cfg));
+    return ok(`已添加工作区 ${id}${cfg.activeWorkspace === id ? "（已设为当前）" : ""}\nvaultPath: ${cfg.vaultPath}`);
+  }
+
+  if (action === "use") {
+    const [id] = args;
+    if (!id) return err("用法：/retro workspace use <id>");
+    if (!list.some((item) => item && item.id === id)) return err(`工作区不存在：${id}（用 /retro workspace list 查看）`);
+    persistConfig({ activeWorkspace: id });
+    Object.assign(cfg, loadConfig(cfg));
+    return ok(`已切换到工作区 ${id}\nvaultPath: ${cfg.vaultPath}${cfg.blogPath ? `\nblogPath: ${cfg.blogPath}` : ""}`);
+  }
+
+  if (action === "remove") {
+    const [id] = args;
+    if (!id) return err("用法：/retro workspace remove <id>");
+    const next = list.filter((item) => item && item.id !== id);
+    if (next.length === list.length) return err(`工作区不存在：${id}`);
+    persistConfig({ workspaces: next, activeWorkspace: cfg.activeWorkspace === id ? "" : cfg.activeWorkspace });
+    Object.assign(cfg, loadConfig(cfg));
+    return ok(`已移除工作区 ${id}${cfg.activeWorkspace ? `（当前：${cfg.activeWorkspace}）` : "（当前回到单库配置）"}`);
+  }
+
+  return err(`未知操作 "${action}"。可用：list | use <id> | add <id> <名称> <vaultPath> [blogPath] | remove <id>`);
 }
 
 function runConfig(store, cfg, rest) {

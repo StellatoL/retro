@@ -5,6 +5,7 @@ import { createQueryService } from "./query.js";
 import { RetroError, computeContentHash, withStoreLock } from "./guard.js";
 import { createActionService } from "./actions.js";
 import { readStaging } from "./settler.js";
+import { saveConfig as persistConfig, loadConfig, listWorkspaces } from "./config.js";
 
 export { renderPanelApi } from "./query.js";
 
@@ -88,8 +89,8 @@ export function registerDetailApi(ctx, store, cfg = {}) {
 // 且复用 lib/actions.js 与 CLI 完全相同的实现，避免两条入口行为漂移。
 // ---------------------------------------------------------------------------
 
-/** P0/P1 阶段允许通过 HTTP 触发的动作白名单。 */
-const WRITE_ACTIONS = new Set(["card.review", "card.patch", "proposal.adopt"]);
+/** P0/P1/P2 阶段允许通过 HTTP 触发的动作白名单（工作区切换会改变写入目标，同样需开启写接口）。 */
+const WRITE_ACTIONS = new Set(["card.review", "card.patch", "proposal.adopt", "workspace.switch"]);
 
 /** 读取并解析 JSON 请求体，限制体积避免内存放大。 */
 function readJsonBody(req, limit = 1 << 20) {
@@ -177,6 +178,28 @@ export function registerActionApi(ctx, store, cfg = {}, { lockDir = store.dir } 
               status: 400,
               hint: "可用：card.review / card.patch / proposal.adopt"
             });
+          }
+
+          if (body.action === "workspace.switch") {
+            // 只切换当前工作区，不触碰 security.* 等安全开关。
+            if (typeof body.id !== "string" || !body.id) {
+              throw new RetroError("RETRO_BAD_REQUEST", "缺少工作区 id", { status: 400 });
+            }
+            if (!listWorkspaces(cfg).some((item) => item.id === body.id)) {
+              throw new RetroError("RETRO_ENTITY_NOT_FOUND", `工作区不存在：${body.id}`, { status: 404 });
+            }
+            await withStoreLock(lockDir, async () => {
+              persistConfig({ activeWorkspace: body.id });
+              // 原位更新配置对象，让后续请求与命令立即读到新路径。
+              Object.assign(cfg, loadConfig(cfg));
+            });
+            sendJson(res, 200, {
+              ok: true,
+              rev: store.getRev(),
+              action: body.action,
+              result: { activeWorkspace: cfg.activeWorkspace, vaultPath: cfg.vaultPath, blogPath: cfg.blogPath }
+            });
+            return;
           }
 
           if (body.action === "proposal.adopt") {

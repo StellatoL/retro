@@ -45,6 +45,8 @@ window.__ModuleLoader__.load({
       "view.entries": "经验库",
       "kind.retro": "复盘",
       "tab.list": "视图",
+      "workspace.label": "工作区",
+      "workspace.switched": "已切换到工作区 {id}",
       "filter.searchPlaceholder": "搜索标题或内容…",
       "filter.drafted": "待审",
       "filter.approved": "已落库",
@@ -114,6 +116,8 @@ window.__ModuleLoader__.load({
       "view.entries": "Experience",
       "kind.retro": "Retro",
       "tab.list": "Views",
+      "workspace.label": "Workspace",
+      "workspace.switched": "Switched to workspace {id}",
       "filter.searchPlaceholder": "Search title or content…",
       "filter.drafted": "Drafted",
       "filter.approved": "Approved",
@@ -728,6 +732,20 @@ window.__ModuleLoader__.load({
         setSelected(null);
       }
 
+      /** 切换工作区：仅影响路径与数据源，不触碰安全开关。 */
+      async function switchWorkspace(id) {
+        if (!writeApiEnabled) {
+          toast.show(t("toast.writeDisabled"));
+          return;
+        }
+        var body = await postAction({ action: "workspace.switch", id });
+        if (!body) return;
+        setSelected(null);
+        setChosen([]);
+        toast.show(t("workspace.switched", { id }));
+        await store.loadSnapshot({});
+      }
+
       /** 把内联编辑写回暂存区（只写暂存，不落库）。 */
       async function saveEdits() {
         if (!selected || selected.type !== "card") return;
@@ -806,6 +824,15 @@ window.__ModuleLoader__.load({
           "data-active": String(view === entry.key),
           onClick: () => { setView(entry.key); setSelected(null); }
         }, t(entry.labelKey)))),
+        (snapshot?.workspaces?.length ?? 0) > 1
+          ? h("select", {
+            className: "dsh-retro-select",
+            "aria-label": t("workspace.label"),
+            value: snapshot.activeWorkspace || "",
+            disabled: !writeApiEnabled || busy,
+            onChange: (event) => switchWorkspace(event.target.value)
+          }, snapshot.workspaces.map((item) => h("option", { key: item.id, value: item.id }, item.name)))
+          : null,
         view === "cards" ? h("select", {
           className: "dsh-retro-select",
           value: filter.status,

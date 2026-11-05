@@ -105,6 +105,7 @@ Automatic collection does not call a model. Draft and weekly-summary generation 
 | `/retro entry keep <id>` | Save an experience entry and refresh the index |
 | `/retro adopt <id\|all>` | Append proposed rules to a skill or global rules file; back up existing content as `.bak` |
 | `/retro cleanup` | Delete staging files for discarded cards while retaining their state records |
+| `/retro workspace list\|use <id>\|add <id> <name> <vaultPath> [blogPath]\|remove <id>` | Manage multiple workspaces; single-vault behaviour is unchanged when none is configured |
 | `/retro report` | Generate a standalone HTML report and try to open it with the system's default opener |
 | `/weekly [--force]` | Generate a seven-day summary; skip generation if a summary from today is awaiting review |
 | `/blog list` | List blog posts |

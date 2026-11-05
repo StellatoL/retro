@@ -7,6 +7,7 @@ import { computeContentHash, verifyNoteScope, RetroError } from "./guard.js";
 import { readOptional, parseFrontmatter } from "./util.js";
 import { proposalTarget, proposalSimilarity, extractProposalContent } from "./evolvor.js";
 import { listBlogPosts, blogPostsDir } from "./publisher.js";
+import { listWorkspaces } from "./config.js";
 
 /** 笔记预览的体积上限：超出部分截断并标记，避免一次响应过大。 */
 const MAX_NOTE_BYTES = 262144;
@@ -266,6 +267,9 @@ export function createQueryService({ store, cfg }) {
         ...renderPanelApi(store, cfg),
         rev,
         writeApiEnabled: cfg.security?.enableWriteApi === true,
+        // 多工作区：未配置时为空数组，不影响旧客户端。
+        workspaces: listWorkspaces(cfg),
+        activeWorkspace: cfg.activeWorkspace || "",
         insights: buildInsights(store)
       };
       const wantsPage = ["resource", "status", "q", "limit", "cursor", "sort"].some((key) => params[key] !== undefined);

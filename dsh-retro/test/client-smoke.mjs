@@ -49,6 +49,8 @@ globalThis.document = {
 let fetched = [];
 let writeApiEnabled = false;
 let postedBody = null;
+let workspacesList = [];
+let activeWorkspace = "";
 globalThis.fetch = async (url, options) => {
   fetched.push({ url: String(url), method: options?.method ?? "GET" });
   if (String(url) === "/retro/action") {
@@ -97,6 +99,8 @@ globalThis.fetch = async (url, options) => {
       generatedAt: new Date().toISOString(),
       rev: 7,
       writeApiEnabled,
+      workspaces: workspacesList,
+      activeWorkspace,
       insights: {
         funnel: { captured: 3, cards: 2, reviewed: 1, approved: 1, adoptionRate: 1 },
         trends: [{ period: "2026-W45", cardsCreated: 2, cardsApproved: 1, proposalsAdopted: 0 }],
@@ -431,6 +435,40 @@ test("界面文案随浏览器语言切换英文", async (t) => {
   const buttons = findByClass(tree, "dsh-retro-btn").map((node) => textOf(node));
   assert.ok(buttons.includes("Copy keep command"), `应出现英文按钮，实际：${buttons.join("|")}`);
   assert.ok(buttons.includes("Open in Obsidian"));
+  ctx._dispose();
+});
+
+test("多工作区时显示选择器并调用切换动作", async (t) => {
+  created.length = 0;
+  postedBody = null;
+  writeApiEnabled = true;
+  workspacesList = [
+    { id: "a", name: "主库", active: true },
+    { id: "b", name: "团队库", active: false }
+  ];
+  activeWorkspace = "a";
+  t.after(() => { workspacesList = []; activeWorkspace = ""; writeApiEnabled = false; });
+  const registered = [];
+  const slots = {
+    inject(key, cb) { cb(); },
+    register(spec, component) { registered.push({ spec, component }); return () => {}; }
+  };
+  const ctx = startClient(t, { slots });
+  await wait(10);
+  const main = registered.find((row) => row.spec.name === "main");
+  const tree = expand({ type: main.component, props: {}, children: [] });
+
+  let selector = null;
+  walk(tree, (node) => {
+    if (node.type === "select" && node.props?.["aria-label"] === "工作区") selector = node;
+  });
+  assert.ok(selector, "应显示工作区选择器");
+  const options = (selector.children ?? []).flat();
+  assert.equal(options.length, 2);
+  await selector.props.onChange({ target: { value: "b" } });
+  await wait(10);
+  assert.equal(postedBody?.action, "workspace.switch");
+  assert.equal(postedBody?.id, "b");
   ctx._dispose();
 });
 
