@@ -177,6 +177,8 @@ export function createQueryService({ store, cfg }) {
             status: card.status,
             stagingPath: card.stagingPath,
             vaultNote: card.vaultNote,
+            // 供面板直接打开 Obsidian：优先正式笔记，其次暂存区完整相对路径。
+            note: card.vaultNote ?? (cfg.stagingDir && card.stagingPath ? `${cfg.stagingDir}/${card.stagingPath}` : card.stagingPath ?? null),
             sessionIds: card.sessionIds ?? [],
             questions: card.questions ?? [],
             createdAt: card.createdAt,

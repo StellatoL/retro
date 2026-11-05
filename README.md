@@ -118,7 +118,11 @@ Two tools are available to the model: `retro_capture` records material, and `ret
 
 ## Web panel and reports
 
-The Web sidebar shows a “复盘” (Retrospective) row. The plugin registers a main-area panel and that sidebar row through the host slot API, so selecting the row opens the panel in the main area. When the host declares no sidebar slot, or registration fails, a floating “复盘” button in the lower-right corner opens the same panel instead; it disappears as soon as the sidebar row becomes available. While shown, the panel refreshes statistics, cards awaiting review, entry drafts, pending proposals, recently saved notes and audit records every 30 seconds.
+The Web sidebar shows a “复盘” (Retrospective) row with a pending counter (drafted cards plus pending proposals). Selecting it opens the workbench in the main area: Cards and Proposals views, status filtering and keyword search (server-side, cursor paginated), and a detail pane that renders the note as React nodes (no HTML injection) with buttons to copy the review command or open the note through `obsidian://`. When the host declares no sidebar slot, a floating “复盘” button switches the host to this panel instead; it disappears as soon as the sidebar row becomes available.
+
+Changes arrive through the `GET /retro/events` stream; if no frame arrives within 15 seconds the client falls back to version polling (15 s while visible, 60 s in the background) and only fetches the delta.
+
+Write actions (Keep, Discard) stay hidden by default: run `/retro config security.enableWriteApi true` first, then the detail pane offers buttons that call `POST /retro/action`, which reuses the same service layer and audit trail as the commands. Without the flag the pane only offers “copy command”, preserving the existing workflow.
 
 Click an item to copy its command, or use its file button to open the note through `obsidian://`. Run confirmation commands in the session. The browser's device must have Obsidian installed and access to a vault with the matching name.
 

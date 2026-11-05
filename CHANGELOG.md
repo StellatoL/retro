@@ -8,7 +8,10 @@
 - `util.js` 新增 `patchMarkdownSections`：按二级标题局部替换卡片正文，保留用户手写章节。
 - 新增动作服务层 `lib/actions.js`，`/retro` 三组写入命令改为薄适配器，行为与审计完全一致。
 - 新增只读查询层 `lib/query.js` 与 `GET /retro/detail`：快照支持 `sinceRev` 轻量响应、状态过滤、关键字搜索与游标分页；详情返回卡片/提案/条目/白名单笔记。
-- 新增 25 项单测（store v2 迁移、并发锁、笔记作用域、Markdown 合并、分组配置、动作服务、读取端点）。
+- 新增受控写接口 `POST /retro/action`：默认关闭（403 `RETRO_WRITE_DISABLED`），开启后仅放行 `card.review`，与命令共用动作服务层，支持 `expectedHash` 乐观锁（409）。
+- 新增 `GET /retro/events` 事件流：显式 `Content-Encoding: identity` 防压缩缓冲，首帧立即下发 `rev`，25 秒心跳；客户端 15 秒无字节自动降级轮询。
+- 客户端重构为零 HTML 注入：Markdown 解析为 React 节点，新增卡片/提案视图、状态筛选、关键字搜索、详情面板、自绘侧边栏角标；浮动入口改为调用 `ctx.layout.selectPanel`，不再自建 DOM 面板。
+- 新增 32 项单测（store v2 迁移、并发锁、笔记作用域、Markdown 合并、分组配置、动作服务、读取端点、写接口与事件流），客户端冒烟改为节点级断言（含 XSS 载荷与卸载清理）。
 
 ## 0.5.0 — 2026-11-05
 

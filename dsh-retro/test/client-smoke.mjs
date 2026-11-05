@@ -1,32 +1,34 @@
-// 在模拟浏览器中加载客户端，验证左侧栏入口、主区域面板与浮动按钮兜底。
+// 客户端冒烟：左侧栏入口、主面板渲染、详情、复制命令、XSS 转义与卸载清理。
+// 该测试使用最小 React/浏览器替身，验证的是"渲染出什么节点"，而不是 HTML 字符串。
+import { test, after } from "node:test";
+import assert from "node:assert/strict";
 
-// 浏览器环境替身
+// ---- 浏览器替身 -----------------------------------------------------------
 function makeElement(tag) {
   const el = {
     tagName: tag,
     className: "",
+    dataset: {},
     style: {},
     textContent: "",
-    title: "",
-    id: "",
     children: [],
     listeners: {},
     addEventListener(type, fn) { (el.listeners[type] ||= []).push(fn); },
     remove() { el.removed = true; },
-    appendChild(child) { el.children.push(child); return child; }
+    appendChild(child) { el.children.push(child); return child; },
+    getAttribute() { return null; },
+    select() {},
+    focus() {}
   };
   return el;
 }
+
 const created = [];
 globalThis.document = {
+  visibilityState: "visible",
   getElementById() { return null; },
   createElement(tag) {
     const el = makeElement(tag);
-    el.dataset = {};
-    el.getAttribute = (k) => el.dataset[k] ?? null;
-    el.classList = { add() {}, remove() {} };
-    el.select = () => {};
-    el.focus = () => {};
     created.push(el);
     return el;
   },
@@ -34,188 +36,280 @@ globalThis.document = {
   body: makeElement("body"),
   execCommand() { return true; }
 };
-let fetchCalls = 0;
-let notePath = "Index/06_Retro/_retro/rc-1.md";
-globalThis.fetch = async () => {
-  fetchCalls++;
+
+let fetched = [];
+globalThis.fetch = async (url, options) => {
+  fetched.push({ url: String(url), method: options?.method ?? "GET" });
+  if (String(url).startsWith("/retro/detail")) {
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({
+        ok: true,
+        type: "card",
+        id: "rc-1",
+        meta: {
+          title: "草稿卡",
+          status: "drafted",
+          stagingPath: "rc-1.md",
+          note: "Index/06_Retro/_retro/rc-1.md",
+          questions: [],
+          sessionIds: []
+        },
+        contentHash: "abcdef1234567890",
+        rawMarkdown: "# 草稿卡\n\n## 行动项\n\n- 修复 X\n"
+      })
+    };
+  }
   return {
     ok: true,
+    status: 200,
     json: async () => ({
+      generatedAt: new Date().toISOString(),
+      rev: 7,
+      writeApiEnabled: false,
       vaultName: "Obsidian_Stw",
-      stats: { cards: 3, draftedCards: 1 },
+      stats: { cards: 2, draftedCards: 2, approvedCards: 0, proposals: 1, pendingProposals: 1, entries: 0, draftedEntries: 0, publish: 0, publishedPosts: 0, materials: 0, weeklyCount: 0 },
       queue: {
-        cards: [{ id: "rc-1", title: "草稿卡", note: notePath }],
+        cards: [
+          { id: "rc-1", title: "草稿卡", status: "drafted", note: "Index/06_Retro/_retro/rc-1.md" },
+          { id: "rc-2", title: "<img src=x onerror=alert(1)>", status: "drafted", note: null }
+        ],
         entries: [],
-        proposals: []
+        proposals: [{ id: "prop-1", kind: "skill", title: "规则提案" }]
+      },
+      page: {
+        resource: "cards",
+        items: [
+          { id: "rc-1", title: "草稿卡", status: "drafted", stagingPath: "rc-1.md", unresolvedQuestions: 0 },
+          { id: "rc-2", title: "<img src=x onerror=alert(1)>", status: "drafted", stagingPath: "rc-2.md", unresolvedQuestions: 0 }
+        ],
+        nextCursor: null
       },
       recentApproved: [],
       recentAudit: []
     })
   };
 };
+
 let copiedText = null;
-let openedUrl = null;
 Object.defineProperty(globalThis, "navigator", {
-  value: { clipboard: { writeText: async (t) => { copiedText = t; } } },
+  value: { clipboard: { writeText: async (value) => { copiedText = value; } } },
   configurable: true
 });
-
-// 捕获客户端模块定义。
-let capturedDef = null;
+let openedUrl = null;
+let captured = null;
 globalThis.window = {
-  __ModuleLoader__: {
-    load(def) { capturedDef = def; }
-  },
+  __ModuleLoader__: { load(def) { captured = def; } },
   open(url) { openedUrl = url; return null; }
 };
-await import(new URL("../lib/client.js", import.meta.url));
-if (!capturedDef) throw new Error("client bundle did not call __ModuleLoader__.load");
 
-// 精简 Hook 运行时：面板组件只用到 useState / useEffect。
-const hookState = [];
-const hookEffects = [];
-let hookIndex = 0;
+// ---- 最小 Hook 运行时（按组件保存状态，支持嵌套组件）----------------------
+const hookStore = new Map();
+let activeSlot = null;
+function slotFor(component) {
+  if (!hookStore.has(component)) hookStore.set(component, { state: [], effects: [], index: 0 });
+  return hookStore.get(component);
+}
 const reactMock = {
   createElement(type, props, ...children) { return { type, props: props ?? {}, children }; },
   useState(initial) {
-    const i = hookIndex++;
-    if (!(i in hookState)) hookState[i] = typeof initial === "function" ? initial() : initial;
-    return [hookState[i], (value) => { hookState[i] = value; }];
+    const slot = activeSlot;
+    const index = slot.index++;
+    if (!(index in slot.state)) slot.state[index] = typeof initial === "function" ? initial() : initial;
+    return [slot.state[index], (value) => { slot.state[index] = value; }];
   },
   useEffect(setup) {
-    const i = hookIndex++;
-    if (!hookEffects[i]) hookEffects[i] = { setup, ran: false, cleanup: undefined };
+    const slot = activeSlot;
+    const index = slot.index++;
+    if (!slot.effects[index]) slot.effects[index] = { setup, ran: false };
   }
 };
-/** 渲染一次组件并执行尚未运行的 effect；effect 只运行一次。 */
+
 function renderComponent(component, props) {
-  hookIndex = 0;
-  const element = component(props ?? {});
-  let rerun = false;
-  for (const entry of hookEffects) {
-    if (!entry || entry.ran) continue;
-    entry.ran = true;
-    entry.cleanup = entry.setup();
-    rerun = true;
+  const slot = slotFor(component);
+  const previous = activeSlot;
+  activeSlot = slot;
+  slot.index = 0;
+  let element = component(props ?? {});
+  slot.index = 0;
+  let ranAny = false;
+  for (const effect of slot.effects) {
+    if (!effect || effect.ran) continue;
+    effect.ran = true;
+    effect.cleanup = effect.setup();
+    ranAny = true;
   }
-  if (!rerun) return element;
-  hookIndex = 0;
-  return component(props ?? {});
-}
-/** 执行已登记的 effect 清理函数，避免轮询定时器让测试进程无法退出。 */
-function disposeEffects() {
-  for (const entry of hookEffects) {
-    if (entry && typeof entry.cleanup === "function") entry.cleanup();
+  if (ranAny) {
+    slot.index = 0;
+    element = component(props ?? {});
   }
+  activeSlot = previous;
+  return element;
 }
 
-let failures = 0;
-function check(cond, msg) {
-  if (!cond) { console.error("FAIL:", msg); failures++; }
-  else console.log("ok:", msg);
+/** 递归展开函数组件，得到最终宿主节点树。 */
+function expand(node) {
+  if (node == null || typeof node === "boolean") return null;
+  if (Array.isArray(node)) return node.map(expand).filter(Boolean);
+  if (typeof node === "string" || typeof node === "number") return node;
+  if (typeof node.type === "function") return expand(renderComponent(node.type, node.props));
+  return { type: node.type, props: node.props ?? {}, children: (node.children ?? []).map(expand).filter(Boolean) };
 }
+
+function walk(node, visit) {
+  if (node == null || typeof node === "string") return;
+  if (Array.isArray(node)) { node.forEach((child) => walk(child, visit)); return; }
+  visit(node);
+  (node.children ?? []).forEach((child) => walk(child, visit));
+}
+
+function textOf(node) {
+  if (node == null || typeof node === "boolean") return "";
+  if (typeof node === "string" || typeof node === "number") return String(node);
+  if (Array.isArray(node)) return node.map(textOf).join("");
+  return (node.children ?? []).map(textOf).join("");
+}
+
+function findByClass(tree, className) {
+  const hits = [];
+  walk(tree, (node) => { if (node.props?.className === className) hits.push(node); });
+  return hits;
+}
+
+// ---- 载入客户端模块 -------------------------------------------------------
+await import(new URL("../lib/client.js", import.meta.url));
+assert.ok(captured, "客户端未调用 __ModuleLoader__.load");
+const clientExports = captured.factory((name) => {
+  assert.equal(name, "react");
+  return reactMock;
+});
+assert.equal(typeof clientExports.apply, "function");
+assert.equal(clientExports.inject.length, 0, "客户端不应声明强制注入");
+
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-const exports_ = capturedDef.factory((id) => {
-  if (id === "react") return reactMock;
-  throw new Error("unexpected require: " + id);
+
+function makeCtx({ slots, layout } = {}) {
+  return {
+    get(name) {
+      if (name === "slots") return slots;
+      if (name === "layout") return layout;
+      return undefined;
+    },
+    effect(cb) { this._dispose = cb(); }
+  };
+}
+
+// 所有用例共享的挂载登记：即使断言失败也会在收尾时释放定时器与通道。
+const mounted = [];
+after(() => {
+  for (const ctx of mounted) {
+    try { ctx._dispose?.(); } catch { /* 已释放 */ }
+  }
+});
+function startClient(t, options) {
+  const ctx = makeCtx(options);
+  clientExports.apply(ctx);
+  mounted.push(ctx);
+  if (typeof t?.after === "function") t.after(() => ctx._dispose?.());
+  return ctx;
+}
+
+test("左侧栏注册 main 与 sidebar.panellist，零 innerHTML 渲染卡片与详情", async (t) => {
+  created.length = 0;
+  fetched = [];
+  copiedText = null;
+  const registered = [];
+  const slots = {
+    inject(key, cb) { cb(); },
+    register(spec, component) { registered.push({ spec, component }); return () => {}; }
+  };
+  const ctx = startClient(t, { slots });
+  await wait(10);
+
+  const main = registered.find((row) => row.spec.name === "main");
+  const icon = registered.find((row) => row.spec.name === "sidebar.panellist");
+  assert.ok(main && main.spec.key === "dsh-retro");
+  assert.ok(icon && icon.spec.id === "dsh-retro");
+  assert.equal(icon.spec.label(), "复盘");
+
+  // 图标：外层是自绘角标容器，内部是 svg
+  const iconTree = expand({ type: icon.component, props: { size: 18, active: false }, children: [] });
+  let svgCount = 0;
+  walk(iconTree, (node) => { if (node.type === "svg") svgCount += 1; });
+  assert.ok(svgCount >= 1, "图标必须渲染 svg");
+
+  // 主面板：列表渲染 + 无 innerHTML 注入点
+  const tree = expand({ type: main.component, props: {}, children: [] });
+  assert.equal(findByClass(tree, "dsh-retro-main").length, 1);
+  const rows = findByClass(tree, "dsh-retro-row");
+  assert.equal(rows.length, 2);
+  assert.ok(textOf(tree).includes("草稿卡"));
+  let innerHtmlNodes = 0;
+  walk(tree, (node) => { if (node.props && "dangerouslySetInnerHTML" in node.props) innerHtmlNodes += 1; });
+  assert.equal(innerHtmlNodes, 0, "不得使用 dangerouslySetInnerHTML");
+
+  // XSS 载荷必须作为纯文本子节点出现，不能变成真实节点
+  const xssRow = rows.find((row) => textOf(row).includes("<img src=x"));
+  assert.ok(xssRow, "恶意标题应作为文本渲染");
+  let injectedImg = 0;
+  walk(xssRow, (node) => { if (node.type === "img") injectedImg += 1; });
+  assert.equal(injectedImg, 0, "不得把标题解析成真实 img 节点");
+
+  // 点击行 -> 打开详情并请求 /retro/detail
+  await xssRow.props.onClick();
+  await wait(10);
+  assert.ok(fetched.some((entry) => entry.url.startsWith("/retro/detail")), "点击卡片应拉取详情");
+  const detailTree = expand({ type: main.component, props: {}, children: [] });
+  assert.equal(findByClass(detailTree, "dsh-retro-detail").length, 1);
+  assert.ok(textOf(detailTree).includes("行动项"), "详情应渲染 Markdown 正文");
+
+  // 复制落库命令（保留既有习惯）
+  const copyButton = findByClass(detailTree, "dsh-retro-btn").find((node) => textOf(node).includes("复制落库命令"));
+  assert.ok(copyButton, "详情应提供复制落库命令");
+  copyButton.props.onClick();
+  await wait(5);
+  assert.equal(copiedText, "/retro review rc-2 keep");
+
+  assert.ok(!created.some((el) => el.className === "dsh-retro-fab"), "左侧栏入口可用时不应创建浮动按钮");
+  ctx._dispose();
 });
 
-// 场景一：左侧栏入口（DSH 0.2 的 main 面板 + sidebar.panellist 图标行）
-{
+test("宿主无 slots 时立即创建浮动入口，并能提示切换面板", async (t) => {
   created.length = 0;
-  hookState.length = 0;
-  hookEffects.length = 0;
-  const registered = [];
-  const slotsMock = {
-    // 座位已声明：inject 同步执行注册回调。
-    inject(key, cb) { cb(); },
-    register(spec, comp) { registered.push({ spec, comp }); return () => {}; }
-  };
-  const ctx = {
-    get(name) { return name === "slots" ? slotsMock : undefined; },
-    effect(cb) { this._disposer = cb(); }
-  };
-  exports_.apply(ctx);
-
-  const main = registered.find((r) => r.spec.name === "main");
-  const icon = registered.find((r) => r.spec.name === "sidebar.panellist");
-  check(!!main && main.spec.key === "dsh-retro", "注册 main 面板（key=dsh-retro）");
-  check(!!icon && icon.spec.id === "dsh-retro", "注册左侧栏图标条目（id=dsh-retro）");
-  check(typeof icon?.spec.label === "function" && icon.spec.label() === "复盘", "侧边栏行标签为「复盘」");
-  check(typeof icon?.comp === "function", "图标条目提供 React 组件");
-  const iconEl = icon.comp({ size: 18, active: false });
-  check(iconEl && iconEl.type === "svg", "图标渲染为内联 svg");
-
-  const panelEl = renderComponent(main.comp, {});
-  check(panelEl && panelEl.type === "div" && panelEl.props.className === "dsh-retro-main", "主区域面板容器可用");
-  await wait(10);
-  const filled = renderComponent(main.comp, {});
-  const html = filled?.props?.dangerouslySetInnerHTML?.__html ?? "";
-  check(fetchCalls >= 1, "面板渲染时请求 /retro/api");
-  check(html.includes("data-copy='/retro review rc-1 keep'"), "面板渲染卡片与复制命令");
-  check(html.includes("data-open='Index/06_Retro/_retro/rc-1.md'"), "面板渲染 Obsidian 打开路径");
-  check(!created.some((e) => e.className === "dsh-retro-fab"), "左侧栏入口可用时不创建浮动按钮");
-
-  // 主区域面板的点击委托与浮动面板一致。
-  await wait(10);
-  filled.props.onClick({ target: { closest: (sel) => (sel === "[data-open]" ? { getAttribute: () => "Index/06_Retro/_retro/rc-1.md" } : null) } });
-  check(!!openedUrl && openedUrl.startsWith("obsidian://open?vault=Obsidian_Stw&file="), "点击打开生成 obsidian:// URI");
-  filled.props.onClick({ target: { closest: (sel) => (sel === "[data-open]" ? null : sel === "[data-copy]" ? { getAttribute: () => "/retro review rc-1 keep" } : null) } });
-  await wait(10);
-  check(copiedText === "/retro review rc-1 keep", "点击条目复制命令到剪贴板");
-
-  check(typeof ctx._disposer === "function", "effect disposer 已注册");
-  disposeEffects();
-  ctx._disposer();
-  check(created.every((el) => el.removed), "卸载后移除面板、按钮、提示和样式");
-}
-
-// 场景二：宿主没有 slots 服务时立即启用浮动入口
-{
-  created.length = 0;
-  const ctx = { get() { return undefined; }, effect(cb) { this._disposer = cb(); } };
-  exports_.apply(ctx);
-  const fab = created.find((e) => e.className === "dsh-retro-fab");
-  check(!!fab, "slots 不可用时创建浮动按钮");
+  const ctx = startClient(t, {});
+  const fab = created.find((el) => el.className === "dsh-retro-fab");
+  assert.ok(fab, "无 slots 时应创建浮动按钮");
   fab.listeners.click[0]();
-  check(created.some((e) => e.className === "dsh-retro-panel" && e.style.display === "block"), "浮动按钮打开面板");
-  ctx._disposer();
-}
+  const toast = created.find((el) => el.className === "dsh-retro-toast");
+  assert.ok(toast && toast.textContent.includes("左侧栏"), "缺少 layout 时应提示使用左侧栏入口");
+  ctx._dispose();
+});
 
-// 场景三：座位迟迟未声明时先兜底浮动入口，座位出现后撤下
-{
+test("座位延迟声明时先兜底浮动入口，入口就绪后撤下", async (t) => {
   created.length = 0;
   const callbacks = [];
-  const slotsMock = {
-    inject(key, cb) { callbacks.push({ key, cb }); },
-    register(spec) { return () => {}; }
+  const slots = {
+    inject(key, cb) { callbacks.push(cb); },
+    register() { return () => {}; }
   };
-  const ctx = { get(name) { return name === "slots" ? slotsMock : undefined; }, effect(cb) { this._disposer = cb(); } };
-  exports_.apply(ctx);
-  check(!created.some((e) => e.className === "dsh-retro-fab"), "座位未声明前不立即创建浮动按钮");
+  const ctx = startClient(t, { slots });
+  assert.ok(!created.some((el) => el.className === "dsh-retro-fab"), "座位未声明前不应立即创建浮动按钮");
   await wait(750);
-  const fab = created.find((e) => e.className === "dsh-retro-fab");
-  check(!!fab, "等待后仍未注册时创建浮动按钮兜底");
-  // 座位稍后声明：两个注册回调执行后撤下浮动入口。
-  for (const { cb } of callbacks) cb();
-  check(!!fab && fab.removed, "左侧栏入口就绪后移除浮动按钮");
-  ctx._disposer();
-}
-
-// 场景四：含单引号的文件名也必须保持为完整属性值，不能插入额外 HTML 属性。
-{
-  created.length = 0;
-  notePath = "Index/_retro/quote'onmouseover='alert(1).md";
-  const ctx = { get() {}, effect(fn) { this.dispose = fn(); } };
-  exports_.apply(ctx);
   const fab = created.find((el) => el.className === "dsh-retro-fab");
-  fab.listeners.click[0]();
-  await wait(10);
-  const panel = created.find((el) => el.className === "dsh-retro-panel");
-  check(panel.innerHTML.includes("quote&#39;onmouseover=&#39;alert(1).md"), "属性中的单引号经过转义");
-  ctx.dispose();
-  check(created.every((el) => el.removed), "卸载后移除面板、按钮、提示和样式");
-}
+  assert.ok(fab, "等待后仍未注册时应创建浮动按钮");
+  for (const cb of callbacks) cb();
+  assert.ok(fab.removed, "入口就绪后应移除浮动按钮");
+  ctx._dispose();
+});
 
-if (failures > 0) throw new Error(`${failures} 项客户端检查失败`);
-console.log("client bundle smoke: ALL PASS");
+test("卸载时清理样式、按钮与数据通道", async (t) => {
+  created.length = 0;
+  const slots = { inject(key, cb) { cb(); }, register() { return () => {}; } };
+  const ctx = startClient(t, { slots });
+  const style = created.find((el) => el.tagName === "style");
+  assert.ok(style, "应注入样式表");
+  ctx._dispose();
+  assert.ok(style.removed, "卸载时必须移除样式");
+  assert.ok(created.filter((el) => el.className === "dsh-retro-toast").every((el) => el.removed));
+});
