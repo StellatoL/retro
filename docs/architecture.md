@@ -1,6 +1,6 @@
 # 当前架构
 
-本文描述 `dsh-retro 0.3.0` 的现有实现。安装、配置与命令说明见 [English README](../README.md) 或[中文 README](../README.zh-CN.md)。
+本文描述 `dsh-retro 0.4.0` 的现有实现。安装、配置与命令说明见 [English README](../README.md) 或[中文 README](../README.zh-CN.md)。
 
 ## 入口与部署
 
@@ -15,7 +15,7 @@
 
 DSH 按 `dsh.bundle.patch` 装配宿主插件；`dsh.client: { platform: "web", inject: [] }` 声明浏览器部分。客户端发现依赖裸包名，因此 patch 不使用源码相对路径作为插件名称。
 
-宿主必需服务为 `commands`、`llm`、`sessionQuery`、`tools`。`webServer` 通过可选注入注册，不作为宿主启动的强制依赖。会话事件由 Cordis 全局事件机制提供。运行时依赖在清单中声明为 peer dependencies，开发测试固定到 DSH `0.1.2-rc.1` 和 Cordis `4.0.2`。
+宿主必需服务为 `commands`、`llm`、`sessionQuery`、`tools`。`webServer` 通过可选注入注册，不作为宿主启动的强制依赖。会话事件由 Cordis 全局事件机制提供。运行时依赖在清单中声明为 peer dependencies，并用 `engines.dsh: ^0.2.2-rc.1` 标注兼容范围；开发测试固定到 DSH `0.2.2-rc.1` 和 Cordis `4.1.0`。
 
 ## 数据流
 
@@ -107,7 +107,7 @@ LLM 请求使用 `createUserMessage` 构建内容块数组，经 `ctx.llm.stream
 
 `client.js` 按 `window.__ModuleLoader__.load({ id, factory })` 协议声明模块，在工厂中取得宿主提供的 React。它使用 DOM 展示面板，React 仅负责插槽按钮，不额外引入前端构建链。
 
-挂载时探测 `slots`：可用则注册 `sidebar.footer.action`，否则创建浮动按钮。面板开启时每 30 秒读取 API，关闭时停止轮询；卸载时移除本次创建的面板、提示、按钮、样式和计时器，忽略晚到的异步更新。
+挂载时探测 `slots` 并调用 `slots.inject("sidebar.footer.action", …)`：该调用对未声明的座位会静默等待而不报错，因此只有注册回调真正执行才视为挂载成功。回调未同步执行时立即创建浮动按钮，座位稍后出现再由回调撤下浮动入口。DSH 0.2 的侧边栏不再声明该座位，当前宿主因此使用浮动入口。面板开启时每 30 秒读取 API，关闭时停止轮询；卸载时移除本次创建的面板、提示、按钮、样式和计时器，忽略晚到的异步更新。
 
 API 路由位于 `/retro/api`，支持 GET/HEAD，其他方法返回 405 和 Allow 头。响应使用 `Cache-Control: no-store`。没有写入 API；复制命令与打开笔记在浏览器中完成。网络访问与鉴权沿用宿主设置，插件未另建认证服务。
 

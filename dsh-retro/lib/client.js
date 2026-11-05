@@ -202,9 +202,30 @@ window.__ModuleLoader__.load({
         if (style) style.remove();
       }
 
-      // 优先挂载到 sidebar.footer.action；注册失败时降级为浮动按钮。
+      // 入口优先级：优先注册到侧边栏座位，座位缺失时使用浮动按钮。
+      // 注意：slots.inject 对“未声明的座位”会静默等待而不会抛错（DSH 0.2 起
+      // 侧边栏不再声明 sidebar.footer.action），因此只有注册回调真正执行才算挂载成功；
+      // 同步未执行时先显示浮动按钮，座位稍后出现再由回调移除浮动入口。
       var slots = ctx.get("slots");
       var mounted = false;
+      var fab = null;
+
+      function mountFab() {
+        if (disposed || fab) return;
+        fab = document.createElement("button");
+        fab.className = "dsh-retro-fab";
+        fab.textContent = "复盘";
+        fab.title = "dsh-retro 复盘面板";
+        fab.addEventListener("click", toggle);
+        document.body.appendChild(fab);
+      }
+      function unmountFab() {
+        if (fab) {
+          fab.remove();
+          fab = null;
+        }
+      }
+
       if (slots && typeof slots.inject === "function") {
         function RetroAction() {
           return React.createElement(
@@ -215,33 +236,26 @@ window.__ModuleLoader__.load({
         }
         try {
           slots.inject("sidebar.footer.action", function () {
+            mounted = true;
+            unmountFab();
             return slots.register(
               { name: "sidebar.footer.action", inject: function () { return {}; } },
               RetroAction
             );
           });
-          mounted = true;
         } catch (error) {
           mounted = false;
         }
       }
-      if (!mounted) {
-        var fab = document.createElement("button");
-        fab.className = "dsh-retro-fab";
-        fab.textContent = "复盘";
-        fab.title = "dsh-retro 复盘面板";
-        fab.addEventListener("click", toggle);
-        document.body.appendChild(fab);
-        ctx.effect(function () {
-          return function () {
-            cleanup();
-            fab.remove();
-          };
-        }, "dsh-retro: panel");
-        return;
-      }
+      // 座位未声明或注册失败：立即启用浮动入口，避免面板不可达。
+      if (!mounted) mountFab();
 
-      ctx.effect(function () { return cleanup; }, "dsh-retro: panel");
+      ctx.effect(function () {
+        return function () {
+          unmountFab();
+          cleanup();
+        };
+      }, "dsh-retro: panel");
     }
 
     exports.apply = apply;

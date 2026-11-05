@@ -1,5 +1,5 @@
 // 事件采集器：从会话事件中提取复盘素材，并按需创建待处理建议。
-// 按 dsh-session 0.1.2-rc.1 区分日志事件与生命周期通知：
+// 按 dsh-session 0.2.2-rc.1 区分日志事件与生命周期通知：
 // goal/change、feedback/record 等经 session/event 接收，
 // session/disposed 则单独订阅；global: true 可接收各会话的事件。
 

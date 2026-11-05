@@ -13,7 +13,7 @@
 
 需要 Node.js 22 或更新版本、用于管理 profile 插件的 pnpm，以及已配置模型的 DSH。DSH 的安装参见[官方仓库说明](https://github.com/deepseek-ai/deepseek-harness)，Web 界面和首次配置参见[官方快速开始](https://deepseek-harness.github.io/deepseek-harness/guide/quickstart)。
 
-当前版本针对 DSH `0.1.2-rc.1` 验证了工具契约、宿主与客户端加载，以及 CLI 安装和配置合成。
+包中声明了 `engines.dsh`（`^0.2.2-rc.1`）和与之匹配的 `@deepseek-ai/dsh-*` peer 依赖，DSH 会在激活前拒绝不兼容的宿主。当前版本针对 DSH `0.2.2-rc.1` 与 Cordis `4.1.0` 验证了工具契约、会话事件、宿主与客户端加载，以及配置合成。
 
 安装到 Web profile：
 
@@ -38,6 +38,7 @@ dsh plugin --profile web add .
 
 ### 从旧版本升级
 
+- 0.4.0 面向 DSH `0.2.2-rc.1`。继续使用 DSH `0.1.x` 时请安装 0.3.0；现在由 `engines.dsh` 与 peer 范围拒绝旧宿主，而不是等到运行时报错。
 - 仓库根目录现在是正式分发包。原先指向 `dsh-retro/` 的本地链接仍可使用；新安装统一使用仓库根目录。
 - 若个人 `cordis.patch.yml` 中已有手工插入的 `retro` 行，改用 bundle 安装时移除这条重复插入；有自定义配置时先保存配置。个人路径可通过下文的 `/retro config` 恢复。
 - 手工加载时，插件行的 `name` 必须是裸包名 `dsh-retro`，客户端发现依赖包元数据。
@@ -117,7 +118,7 @@ dsh plugin --profile web add .
 
 ## Web 面板与报告
 
-Web 侧边栏底部显示“复盘”按钮；插槽不可用时显示浮动按钮。面板打开后每 30 秒刷新统计、待审卡片、待确认条目、待采纳提案、最近落库与审计记录。
+宿主声明侧边栏底部座位时，Web 侧边栏显示“复盘”按钮。DSH 0.2 起不再声明该座位，因此当前版本由右下角的浮动“复盘”按钮打开同一面板；座位稍后出现时会自动移除浮动入口。面板打开后每 30 秒刷新统计、待审卡片、待确认条目、待采纳提案、最近落库与审计记录。
 
 点击条目复制相应命令，点击文件按钮通过 `obsidian://` 打开笔记。确认动作仍需在会话中执行。浏览器所在设备需要安装 Obsidian，并能打开同名知识库。
 

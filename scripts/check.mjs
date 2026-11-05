@@ -20,6 +20,13 @@ for (const key of ["name", "version", "type", "engines", "license", "peerDepende
 assert.deepEqual(pkg.dsh.client, { platform: "web", inject: [] });
 assert.deepEqual(pkg.dsh.client, legacy.dsh.client);
 assert.ok(pkg.keywords.includes("dsh-plugin"));
+// 官方分发约定：兼容的 DSH 版本写在 engines.dsh，且与 dsh-* peer 依赖保持一致。
+assert.equal(typeof pkg.engines.dsh, "string", "必须在 engines.dsh 中声明兼容的 DSH 版本");
+assert.match(pkg.engines.dsh, /^\^0\.\d+\.\d+/, "engines.dsh 必须是以 ^ 开头的 SemVer 范围");
+for (const [name, range] of Object.entries(pkg.peerDependencies)) {
+  if (!name.startsWith("@deepseek-ai/dsh-")) continue;
+  assert.equal(range, pkg.engines.dsh, `peer 依赖 ${name} 的范围必须与 engines.dsh 一致`);
+}
 for (const key of [".", "./client", "./cordis.patch.yml"]) {
   assert.equal(pkg.exports[key], `./dsh-retro${legacy.exports[key].slice(1)}`);
   assert.ok(existsSync(path.join(root, pkg.exports[key])), `缺少导出文件：${key}`);
@@ -44,6 +51,7 @@ function sourceFiles(dir) {
 }
 const files = ["dsh-retro/lib", "dsh-retro/test", "scripts"].flatMap((dir) => sourceFiles(path.join(root, dir)));
 for (const file of files) {
-  execFileSync(process.execPath, [...process.execArgv, "--check", path.relative(root, file)], { cwd: root, stdio: "pipe" });
+  // 用 inherit 直接复用父进程输出：受限环境无法建立子进程管道，语法错误也会原样打印。
+  execFileSync(process.execPath, [...process.execArgv, "--check", path.relative(root, file)], { cwd: root, stdio: "inherit" });
 }
 console.log(`检查通过：DSH 分发清单、兼容入口、技能元数据、${files.length} 个脚本的语法。`);

@@ -116,8 +116,10 @@ function check(cond, msg) {
     check(created.some((e) => e.className === "dsh-retro-panel" && e.style.display === "none"), "再次点击关闭面板");
   }
   check(typeof registerDisposer === "function", "register 返回 disposer");
-  // 侧边栏模式下不再创建浮动按钮。
-  check(!created.some((e) => e.className === "dsh-retro-fab"), "侧边栏模式下无浮动按钮");
+  // 座位在注册回调执行后才确认可用：此前显示的浮动入口应被移除。
+  const fabs = created.filter((e) => e.className === "dsh-retro-fab");
+  check(fabs.length === 1, "座位未确认前先挂载浮动入口兜底");
+  check(fabs.every((e) => e.removed), "座位可用后移除浮动入口");
   check(typeof ctx._disposer === "function", "effect disposer 已注册");
   if (typeof ctx._disposer === "function") { ctx._disposer(); check(true, "disposer 可调用"); }
 }

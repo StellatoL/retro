@@ -13,7 +13,7 @@ Session events → material / suggestions → retrospective drafts → manual re
 
 Requires Node.js 22 or later, pnpm to manage profile plugins, and DSH with a configured model. See the [official repository](https://github.com/deepseek-ai/deepseek-harness) for DSH installation and the [quickstart](https://deepseek-harness.github.io/deepseek-harness/guide/quickstart) for the Web UI and initial setup.
 
-The current version has been checked against DSH `0.1.2-rc.1` for tool contracts, host and client loading, CLI installation and configuration composition.
+The package declares `engines.dsh` (`^0.2.2-rc.1`) plus matching `@deepseek-ai/dsh-*` peer dependencies, so DSH can reject an incompatible host before activation. This version has been checked against DSH `0.2.2-rc.1` and Cordis `4.1.0` for tool contracts, session events, host and client loading, and configuration composition.
 
 Install into the Web profile:
 
@@ -38,6 +38,7 @@ For another profile that provides the base services, replace `web` in the comman
 
 ### Upgrading from an older version
 
+- Version 0.4.0 targets DSH `0.2.2-rc.1`. Stays on DSH `0.1.x` require 0.3.0; `engines.dsh` and the peer ranges now reject older hosts instead of failing at runtime.
 - The repository root is now the distribution package. Existing local links to `dsh-retro/` remain supported; use the root for new installations.
 - If your personal `cordis.patch.yml` already inserts a `retro` row, save any custom configuration and remove that duplicate insertion when switching to bundle installation. Restore personal paths with `/retro config`.
 - When loading the plugin manually, use the bare package name `dsh-retro` in the row's `name` field. Client discovery uses the package metadata.
@@ -117,7 +118,7 @@ Two tools are available to the model: `retro_capture` records material, and `ret
 
 ## Web panel and reports
 
-A “复盘” (Retrospective) button appears at the bottom of the Web sidebar, with a floating button as a fallback when the slot is unavailable. While open, the panel refreshes statistics, cards awaiting review, entry drafts, pending proposals, recently saved notes and audit records every 30 seconds.
+The panel opens from a “复盘” (Retrospective) button in the Web sidebar where the host declares the sidebar footer seat. DSH 0.2 no longer declares that seat, so on current hosts the same panel opens from a floating “复盘” button in the lower-right corner; the floating entry is removed automatically if the seat appears later. While open, the panel refreshes statistics, cards awaiting review, entry drafts, pending proposals, recently saved notes and audit records every 30 seconds.
 
 Click an item to copy its command, or use its file button to open the note through `obsidian://`. Run confirmation commands in the session. The browser's device must have Obsidian installed and access to a vault with the matching name.
 

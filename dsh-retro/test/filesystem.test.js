@@ -1,7 +1,7 @@
 // 验证配置路径、只读白名单与博客路径边界；所有文件均位于临时目录。
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, rmdirSync, symlinkSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { safeJoin } from "../lib/util.js";
@@ -12,7 +12,14 @@ import { RetroStore } from "../lib/store.js";
 
 function harness(t) {
   const dir = mkdtempSync(path.join(os.tmpdir(), "retro-paths-"));
-  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  // Windows 上目录链接可能让递归删除报 ENOTEMPTY；清理失败不应覆盖断言结论。
+  t.after(() => {
+    try {
+      rmSync(dir, { recursive: true, force: true, maxRetries: 3 });
+    } catch {
+      /* 临时目录残留不影响测试结果 */
+    }
+  });
   const vault = path.join(dir, "vault");
   mkdirSync(vault);
   return { dir, vault, cfg: { ...DEFAULTS, vaultPath: vault }, store: new RetroStore(path.join(dir, "state")) };
@@ -48,9 +55,19 @@ test("暂存区中的目录链接不能将写入导向白名单之外", (t) => {
   ensureDirs(cfg);
   const outside = path.join(dir, "outside");
   mkdirSync(outside);
-  symlinkSync(outside, path.join(vault, cfg.stagingDir, "linked"), "junction");
-  assert.throws(() => writeStaging(cfg, "linked/file.md", "不应写出"));
-  assert.equal(existsSync(path.join(outside, "file.md")), false);
+  const link = path.join(vault, cfg.stagingDir, "linked");
+  symlinkSync(outside, link, "junction");
+  try {
+    assert.throws(() => writeStaging(cfg, "linked/file.md", "不应写出"));
+    assert.equal(existsSync(path.join(outside, "file.md")), false);
+  } finally {
+    // 先断开目录链接：rmdir 只删除链接本身，不影响链接目标；残留链接会让递归清理报 ENOTEMPTY。
+    try {
+      rmdirSync(link);
+    } catch {
+      rmSync(link, { recursive: true, force: true });
+    }
+  }
 });
 
 test("知识库未配置时，经验条目不能落入当前工作目录", (t) => {
