@@ -1128,9 +1128,8 @@ window.__ModuleLoader__.load({
         return h(Workbench, { store, toast });
       }
 
-      store.start();
-
-      var slots = ctx.get("slots");
+      // 先完成入口注册，再启动数据层：即便取数/事件流出问题，侧边栏入口也不会因此消失。
+      var slots = ctx.get ? ctx.get("slots") : ctx.slots;
       var panelRegistered = false;
       var iconRegistered = false;
       var fab = null;
@@ -1197,6 +1196,13 @@ window.__ModuleLoader__.load({
           fabTimer = null;
           if (!entryReady()) mountFab();
         }, FAB_DELAY_MS);
+      }
+
+      // 入口注册完成后再启动数据层；取数失败只影响内容，不牵连入口。
+      try {
+        store.start();
+      } catch (error) {
+        toast.show(t("toast.failed", { message: String(error?.message ?? error) }));
       }
 
       // 卸载清理：数据仓（SSE/轮询）、浮动按钮、提示、样式。
