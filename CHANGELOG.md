@@ -1,5 +1,46 @@
 # 变更记录
 
+## 0.9.0 — 2026-11-05
+
+- 多工作区（FR-12）：配置新增 `workspaces` 与 `activeWorkspace`，`loadConfig` 合并后按激活项覆盖 `vaultPath`/`blogPath`，未配置时行为与单库完全一致。
+- 新增 `/retro workspace list|use <id>|add <id> <名称> <vaultPath> [blogPath]|remove <id>` 命令；首个工作区自动设为当前，移除当前项回到单库配置。
+- 写接口新增 `workspace.switch`（同样受 `security.enableWriteApi` 约束，不触碰 `security.*` 开关），快照新增 `workspaces` 与 `activeWorkspace` 字段。
+- 客户端工具栏在多工作区时显示工作区选择器，切换后刷新列表与洞察。
+- 新增 5 项后端单测与 1 项客户端冒烟；测试全部隔离到临时 `DSH_RETRO_DIR`，不再读写真实配置。
+
+## 0.8.0 — 2026-11-05
+
+- 客户端界面支持中英双语：文案集中到 `TEXT_ZH` / `TEXT_EN` 词条表，按浏览器语言惰性切换，`t(key, params)` 支持占位符插值；覆盖视图标签、筛选、按钮、空态/错误态、详情标题、命令面板与提示消息。
+- 新增客户端冒烟用例：英文环境下断言视图标签、洞察条与详情按钮文案。
+- 架构文档移除“界面多语言”延后项，仅保留多工作区与虚拟滚动的说明。
+
+## 0.7.0 — 2026-11-05
+
+- P3 洞察与导航：快照新增 `insights`（状态漏斗、按周趋势、LLM 用量），`stats` 保持 0.5.0 形态不变；客户端新增洞察条、`Ctrl/Cmd+K` 命令面板（切换视图/跳转条目）、列表键盘导航与 ARIA 标注。
+- 架构文档记录有意延后项：多工作区切换、界面多语言、列表虚拟滚动（单页 50 条无需虚拟化）。
+- P2 资源视图：快照支持 `resource=materials|weekly|blog|entries` 列表（素材可按 `kind`/`session` 过滤），新增 `GET /retro/detail?type=blog` 返回 frontmatter、正文与发布前预检（draft 标记、缺失本地图片）。
+- 客户端新增素材 / 周报 / 博客 / 经验库四个视图；博客详情展示预检结果并可复制发布命令。
+- 博客未配置时统一返回 `RETRO_BLOG_UNAVAILABLE`，而不是抛出未分类异常。
+- 新增 5 项 P2 后端单测与客户端视图入口断言。
+- P1 提案审阅：`GET /retro/detail?type=proposal` 返回将追加的行、目标文件末尾上下文、目标是否存在与相似提案提示（bigram Jaccard）。
+- P1 批量采纳：`POST /retro/action` 新增 `proposal.adopt`（支持 `ids` 数组或 `all`，`all` 仍按相似度去重并标记 skipped）。
+- P1 内联编辑：新增 `card.patch` 动作与 `actions.patchCard`，按二级标题局部写回暂存文件并更新 `contentHash`，同样受乐观锁保护。
+- 客户端：提案视图展示追加 Diff 与重复警告、勾选批量采纳；卡片详情支持行动项/关键经验内联编辑并保存到暂存区；列表支持 j/k/方向键与 Enter/Esc 键盘操作。
+- 新增 5 项 P1 后端单测与 1 项客户端冒烟（提案 Diff + 批量采纳）。
+
+## 0.6.0 — 2026-11-05
+
+- P0 基础层：新增 `lib/guard.js`（跨进程 `store.lock`、内容哈希、写前 `.bak` 备份、笔记读取作用域）。
+- store 升级为 v2：`meta.schemaVersion` 与单调递增 `meta.rev`；旧文件首次加载自动备份 `store.v1.bak.json` 再原地升级，旧字段全部保留。
+- 配置支持分组点号键（`security.enableWriteApi` 等），写接口与全库笔记预览默认关闭。
+- `util.js` 新增 `patchMarkdownSections`：按二级标题局部替换卡片正文，保留用户手写章节。
+- 新增动作服务层 `lib/actions.js`，`/retro` 三组写入命令改为薄适配器，行为与审计完全一致。
+- 新增只读查询层 `lib/query.js` 与 `GET /retro/detail`：快照支持 `sinceRev` 轻量响应、状态过滤、关键字搜索与游标分页；详情返回卡片/提案/条目/白名单笔记。
+- 新增受控写接口 `POST /retro/action`：默认关闭（403 `RETRO_WRITE_DISABLED`），开启后仅放行 `card.review`，与命令共用动作服务层，支持 `expectedHash` 乐观锁（409）。
+- 新增 `GET /retro/events` 事件流：显式 `Content-Encoding: identity` 防压缩缓冲，首帧立即下发 `rev`，25 秒心跳；客户端 15 秒无字节自动降级轮询。
+- 客户端重构为零 HTML 注入：Markdown 解析为 React 节点，新增卡片/提案视图、状态筛选、关键字搜索、详情面板、自绘侧边栏角标；浮动入口改为调用 `ctx.layout.selectPanel`，不再自建 DOM 面板。
+- 新增 32 项单测（store v2 迁移、并发锁、笔记作用域、Markdown 合并、分组配置、动作服务、读取端点、写接口与事件流），客户端冒烟改为节点级断言（含 XSS 载荷与卸载清理）。
+
 ## 0.5.0 — 2026-11-05
 
 - 新增左侧栏入口：按 DSH 0.2 的插槽契约注册 `main` 面板与 `sidebar.panellist` 图标行，点击侧边栏“复盘”行即在主区域打开面板。

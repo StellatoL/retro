@@ -105,6 +105,7 @@ Automatic collection does not call a model. Draft and weekly-summary generation 
 | `/retro entry keep <id>` | Save an experience entry and refresh the index |
 | `/retro adopt <id\|all>` | Append proposed rules to a skill or global rules file; back up existing content as `.bak` |
 | `/retro cleanup` | Delete staging files for discarded cards while retaining their state records |
+| `/retro workspace list\|use <id>\|add <id> <name> <vaultPath> [blogPath]\|remove <id>` | Manage multiple workspaces; single-vault behaviour is unchanged when none is configured |
 | `/retro report` | Generate a standalone HTML report and try to open it with the system's default opener |
 | `/weekly [--force]` | Generate a seven-day summary; skip generation if a summary from today is awaiting review |
 | `/blog list` | List blog posts |
@@ -118,7 +119,11 @@ Two tools are available to the model: `retro_capture` records material, and `ret
 
 ## Web panel and reports
 
-The Web sidebar shows a “复盘” (Retrospective) row. The plugin registers a main-area panel and that sidebar row through the host slot API, so selecting the row opens the panel in the main area. When the host declares no sidebar slot, or registration fails, a floating “复盘” button in the lower-right corner opens the same panel instead; it disappears as soon as the sidebar row becomes available. While shown, the panel refreshes statistics, cards awaiting review, entry drafts, pending proposals, recently saved notes and audit records every 30 seconds.
+The Web sidebar shows a “复盘” (Retrospective) row with a pending counter (drafted cards plus pending proposals). Selecting it opens the workbench in the main area with six views — Cards, Proposals, Materials, Weekly, Blog and Experience — and the UI copy follows the browser language (Chinese-or-English). Cards offer a status filter and keyword search (server-side, cursor paginated) plus a detail pane that renders the note as React nodes (no HTML injection) with buttons to copy the review command or open the note through `obsidian://`. Proposal details show the lines that would be appended, the target file's current tail and a similar-proposal warning, with checkbox batch adoption; blog details show the pre-publish checks (draft flag, missing local images). With `security.enableWriteApi` enabled the pane also offers “save edits to staging” (section-level rewrite that keeps hand-written passages) plus Keep/Discard. `Ctrl/Cmd+K` opens a command palette for switching views or jumping to an item, and lists support j/k, arrows, Enter and Esc. When the host declares no sidebar slot, a floating “复盘” button switches the host to this panel instead; it disappears as soon as the sidebar row becomes available.
+
+Changes arrive through the `GET /retro/events` stream; if no frame arrives within 15 seconds the client falls back to version polling (15 s while visible, 60 s in the background) and only fetches the delta.
+
+Write actions (Keep, Discard) stay hidden by default: run `/retro config security.enableWriteApi true` first, then the detail pane offers buttons that call `POST /retro/action`, which reuses the same service layer and audit trail as the commands. Without the flag the pane only offers “copy command”, preserving the existing workflow.
 
 Click an item to copy its command, or use its file button to open the note through `obsidian://`. Run confirmation commands in the session. The browser's device must have Obsidian installed and access to a vault with the matching name.
 

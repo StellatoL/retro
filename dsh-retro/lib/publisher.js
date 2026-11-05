@@ -11,6 +11,11 @@ import { readStaging, readVaultNote, writeStaging } from "./settler.js";
 
 const execFileAsync = promisify(execFile);
 
+/** 博客文章目录的绝对路径（供面板预检与详情读取复用）。 */
+export function blogPostsDir(cfg) {
+  return postsDir(cfg);
+}
+
 function postsDir(cfg) {
   if (typeof cfg.blogPath !== "string" || !cfg.blogPath.trim()) {
     throw new Error("blogPath 未配置：运行 /retro config blogPath <路径> 或设置环境变量 DSH_RETRO_BLOG");
