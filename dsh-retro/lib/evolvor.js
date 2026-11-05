@@ -94,8 +94,7 @@ export function proposeUpdate(cfg, store, { kind, title, content, reason, actor 
 export function adoptProposal(cfg, store, proposal, { actor = "command" } = {}) {
   if (proposal.status !== "pending") throw new Error(`提案 ${proposal.id} 状态为 ${proposal.status}，不可重复采纳`);
   const staged = readStaging(cfg, proposal.relPath);
-  const m = /```markdown\n([\s\S]*?)\n```/.exec(staged);
-  const content = m ? m[1] : staged;
+  const content = extractProposalContent(staged);
 
   let target;
   if (proposal.kind === "skill") {
@@ -175,13 +174,23 @@ function bigrams(text) {
 }
 
 /** 根据标题和理由的特征集计算两份提案的 Jaccard 相似度。 */
-function proposalSimilarity(a, b) {
+export function proposalSimilarity(a, b) {
   const fa = bigrams((a.title ?? "") + (a.reason ?? ""));
   const fb = bigrams((b.title ?? "") + (b.reason ?? ""));
   if (fa.size === 0 || fb.size === 0) return 0;
   let inter = 0;
   for (const x of fa) if (fb.has(x)) inter++;
   return inter / (fa.size + fb.size - inter);
+}
+
+/**
+ * 从提案暂存文件里取出待追加的 Markdown 片段。
+ * 提案文件用 ```markdown 围栏承载片段；没有围栏时退化为整份内容。
+ */
+export function extractProposalContent(staged) {
+  const text = String(staged ?? "");
+  const fenced = /```markdown\r?\n([\s\S]*?)\r?\n```/.exec(text);
+  return (fenced ? fenced[1] : text).trim();
 }
 
 /**

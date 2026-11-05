@@ -206,6 +206,34 @@ window.__ModuleLoader__.load({
       return blocks;
     }
 
+    /** 从卡片正文中取出指定小节正文，供内联编辑预填。 */
+    var SECTION_ALIASES = {
+      actions: ["行动项"],
+      lessons: ["关键经验", "经验"]
+    };
+
+    function extractSection(markdown, key) {
+      var aliases = SECTION_ALIASES[key];
+      if (!aliases) return "";
+      var lines = String(markdown ?? "").split(/\r?\n/);
+      var start = -1;
+      for (var i = 0; i < lines.length; i += 1) {
+        var heading = /^##\s+(.+)$/.exec(lines[i]);
+        if (!heading) continue;
+        var name = heading[1].trim();
+        if (!aliases.some((alias) => name.includes(alias))) continue;
+        start = i + 1;
+        break;
+      }
+      if (start < 0) return "";
+      var body = [];
+      for (var j = start; j < lines.length; j += 1) {
+        if (/^#{1,2}\s+/.test(lines[j])) break;
+        body.push(lines[j]);
+      }
+      return body.join("\n").trim();
+    }
+
     // ---------------------------------------------------------------------
     // [3] 数据层
     // ---------------------------------------------------------------------
@@ -424,6 +452,13 @@ window.__ModuleLoader__.load({
       var busyState = React.useState(false);
       var busy = busyState[0];
       var setBusy = busyState[1];
+      // 提案批量选择与卡片内联编辑草稿
+      var choiceState = React.useState([]);
+      var chosen = choiceState[0];
+      var setChosen = choiceState[1];
+      var editState = React.useState({ actions: "", lessons: "", answers: "" });
+      var edits = editState[0];
+      var setEdits = editState[1];
 
       var snapshot = state.snapshot;
       var writeApiEnabled = snapshot?.writeApiEnabled === true;
@@ -440,11 +475,48 @@ window.__ModuleLoader__.load({
       function selectCard(card) {
         setSelected({ type: "card", id: card.id });
         setDrafts({});
-        store.loadDetail("card", card.id);
+        setEdits({ actions: "", lessons: "", answers: "" });
+        store.loadDetail("card", card.id).then((detail) => {
+          if (!detail || detail.error) return;
+          // 预填现有小节内容，用户改完直接保存回暂存区。
+          setEdits({
+            actions: extractSection(detail.rawMarkdown, "actions"),
+            lessons: extractSection(detail.rawMarkdown, "lessons"),
+            answers: ""
+          });
+        });
       }
       function selectProposal(proposal) {
         setSelected({ type: "proposal", id: proposal.id });
+        setDrafts({});
         store.loadDetail("proposal", proposal.id);
+      }
+      function toggleChosen(id) {
+        setChosen(chosen.includes(id) ? chosen.filter((item) => item !== id) : [...chosen, id]);
+      }
+
+      /** 调用写接口的统一封装：成功后刷新快照。 */
+      async function postAction(payload) {
+        setBusy(true);
+        try {
+          var res = await fetch("/retro/action", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify(payload)
+          });
+          var body = await res.json();
+          if (!res.ok || body.ok === false) {
+            toast.show(`操作失败：${body?.error?.message ?? `HTTP ${res.status}`}`);
+            return null;
+          }
+          store.loadSnapshot({});
+          return body;
+        } catch (error) {
+          toast.show(`操作失败：${String(error?.message ?? error)}`);
+          return null;
+        } finally {
+          setBusy(false);
+        }
       }
 
       async function submitAction(subAction) {
@@ -454,33 +526,69 @@ window.__ModuleLoader__.load({
           return;
         }
         var detail = store.getDetail(selected.type, selected.id);
-        setBusy(true);
-        try {
-          var res = await fetch("/retro/action", {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({
-              action: "card.review",
-              id: selected.id,
-              subAction,
-              expectedHash: detail?.contentHash ?? null,
-              targetDir: drafts.targetDir || undefined,
-              instruction: drafts.instruction || null
-            })
-          });
-          var payload = await res.json();
-          if (!res.ok || payload.ok === false) {
-            toast.show(`操作失败：${payload?.error?.message ?? `HTTP ${res.status}`}`);
-            return;
-          }
-          toast.show(payload.result?.message ?? "操作已完成");
-          setSelected(null);
-          store.loadSnapshot({});
-        } catch (error) {
-          toast.show(`操作失败：${String(error?.message ?? error)}`);
-        } finally {
-          setBusy(false);
+        var body = await postAction({
+          action: "card.review",
+          id: selected.id,
+          subAction,
+          expectedHash: detail?.contentHash ?? null,
+          instruction: drafts.instruction || null
+        });
+        if (!body) return;
+        toast.show(body.result?.message ?? "操作已完成");
+        setSelected(null);
+      }
+
+      /** 把内联编辑写回暂存区（只写暂存，不落库）。 */
+      async function saveEdits() {
+        if (!selected || selected.type !== "card") return;
+        if (!writeApiEnabled) {
+          toast.show("写接口未开启：请复制命令后在会话中执行");
+          return;
         }
+        var detail = store.getDetail("card", selected.id);
+        var sections = {};
+        if (edits.actions.trim()) sections.actions = edits.actions;
+        if (edits.lessons.trim()) sections.lessons = edits.lessons;
+        if (Object.keys(sections).length === 0) {
+          toast.show("没有可保存的修改");
+          return;
+        }
+        var body = await postAction({
+          action: "card.patch",
+          id: selected.id,
+          expectedHash: detail?.contentHash ?? null,
+          sections
+        });
+        if (!body) return;
+        toast.show(body.result?.message ?? "已保存到暂存区");
+        await store.loadDetail("card", selected.id);
+      }
+
+      /** 批量采纳勾选的提案。 */
+      async function adoptChosen() {
+        if (chosen.length === 0) return;
+        if (!writeApiEnabled) {
+          copyText(chosen.map((id) => `/retro adopt ${id}`).join("\n"), toast);
+          return;
+        }
+        var body = await postAction({ action: "proposal.adopt", ids: chosen });
+        if (!body) return;
+        toast.show(body.result?.message ?? "已采纳");
+        setChosen([]);
+        setSelected(null);
+      }
+
+      /** 单条采纳当前提案。 */
+      async function adoptCurrent() {
+        if (!selected || selected.type !== "proposal") return;
+        if (!writeApiEnabled) {
+          copyText(`/retro adopt ${selected.id}`, toast);
+          return;
+        }
+        var body = await postAction({ action: "proposal.adopt", ids: [selected.id] });
+        if (!body) return;
+        toast.show(body.result?.message ?? "已采纳");
+        setSelected(null);
       }
 
       var rows = view === "cards" ? (snapshot?.page?.items ?? snapshot?.queue?.cards ?? []) : (snapshot?.queue?.proposals ?? []);
@@ -512,6 +620,12 @@ window.__ModuleLoader__.load({
           value: filter.q,
           onChange: (event) => setFilter({ ...filter, q: event.target.value })
         }) : null,
+        view === "proposals" && chosen.length > 0
+          ? h("button", {
+            className: "dsh-retro-btn", "data-kind": "primary", disabled: busy,
+            onClick: () => adoptChosen()
+          }, busy ? "采纳中…" : `批量采纳 ${chosen.length}`)
+          : null,
         state.transport === "polling" ? h("span", { className: "dsh-retro-mono" }, "轮询模式") : null
       );
 
@@ -525,16 +639,55 @@ window.__ModuleLoader__.load({
         listBody = h("div", { className: "dsh-retro-empty" },
           view === "cards" ? "没有符合条件的卡片。可在会话中运行 /retro draft today 生成。" : "没有待采纳提案。");
       } else {
-        listBody = h("div", { className: "dsh-retro-rows" }, rows.map((row, index) => {
+        // 键盘可达：j/k 或方向键移动，Enter 打开详情；容器可聚焦。
+        function onRowsKeyDown(event) {
+          if (!rows.length) return;
+          var currentIndex = rows.findIndex((row) => selected && selected.id === row.id);
+          var nextIndex = currentIndex;
+          if (event.key === "j" || event.key === "ArrowDown") nextIndex = Math.min(rows.length - 1, currentIndex + 1);
+          else if (event.key === "k" || event.key === "ArrowUp") nextIndex = Math.max(0, currentIndex <= 0 ? 0 : currentIndex - 1);
+          else if (event.key === "Enter" && currentIndex >= 0) {
+            if (view === "cards") selectCard(rows[currentIndex]);
+            else selectProposal(rows[currentIndex]);
+            return;
+          } else if (event.key === "Escape") {
+            setSelected(null);
+            return;
+          } else {
+            return;
+          }
+          event.preventDefault?.();
+          if (nextIndex !== currentIndex && nextIndex >= 0) {
+            if (view === "cards") selectCard(rows[nextIndex]);
+            else selectProposal(rows[nextIndex]);
+          }
+        }
+        listBody = h("div", {
+          className: "dsh-retro-rows",
+          role: "listbox",
+          tabIndex: 0,
+          onKeyDown: onRowsKeyDown
+        }, rows.map((row, index) => {
           var isActive = selected && selected.id === row.id;
           var title = row.title ?? row.id;
           var meta = view === "cards" ? row.status : row.kind;
+          var isChosen = view === "proposals" && chosen.includes(row.id);
           return h("div", {
             key: row.id ?? index,
             className: "dsh-retro-row",
+            role: "option",
+            "aria-selected": String(Boolean(isActive)),
             "data-active": String(Boolean(isActive)),
             onClick: () => (view === "cards" ? selectCard(row) : selectProposal(row))
           },
+            view === "proposals"
+              ? h("input", {
+                type: "checkbox",
+                checked: isChosen,
+                onClick: (event) => event.stopPropagation(),
+                onChange: () => toggleChosen(row.id)
+              })
+              : null,
             h("span", { className: "dsh-retro-mono" }, row.id ?? ""),
             h("span", { className: "dsh-retro-row-title" }, title),
             meta ? h(StatusBadge, { status: meta }) : null
@@ -557,17 +710,44 @@ window.__ModuleLoader__.load({
               : !detail
                 ? h("div", { className: "dsh-retro-empty" }, "加载中…")
                 : h("div", null,
-                  selected.type === "proposal" && detail.meta?.targetFile
-                    ? h("p", { className: "dsh-retro-mono" }, `目标文件：${detail.meta.targetFile}`)
-                    : null,
-                  h(Markdown, { text: detail.rawMarkdown ?? "" }),
-                  selected.type === "card" && writeApiEnabled
-                    ? h("label", { className: "dsh-retro-field" }, "修改意见（可选，edit 时发送）",
-                      h("textarea", {
-                        value: drafts.instruction ?? "",
-                        onChange: (event) => setDrafts({ ...drafts, instruction: event.target.value })
-                      }))
-                    : null
+                  selected.type === "proposal"
+                    ? h("div", null,
+                      h("p", { className: "dsh-retro-mono" }, `目标文件：${detail.meta?.targetFile ?? "（未知类型）"}`),
+                      detail.meta?.targetExists === false
+                        ? h("p", { className: "dsh-retro-mono" }, "目标文件尚不存在，采纳时会新建")
+                        : null,
+                      detail.meta?.duplicateOf
+                        ? h("p", { className: "dsh-retro-mono" },
+                          `⚠️ 与 ${detail.meta.duplicateOf.id}「${detail.meta.duplicateOf.title}」相似度 ${detail.meta.duplicateOf.similarity}`)
+                        : null,
+                      h("h2", null, "将追加的内容"),
+                      (detail.preview?.existingTail?.length ?? 0) > 0
+                        ? h("pre", { className: "dsh-retro-mono" }, detail.preview.existingTail.join("\n"))
+                        : null,
+                      h("pre", { className: "dsh-retro-md" },
+                        (detail.preview?.appendedLines ?? []).map((line, index) => h("div", { key: index }, `+ ${line}`)))
+                    )
+                    : h("div", null,
+                      h(Markdown, { text: detail.rawMarkdown ?? "" }),
+                      writeApiEnabled
+                        ? h("div", null,
+                          h("label", { className: "dsh-retro-field" }, "行动项",
+                            h("textarea", {
+                              value: edits.actions,
+                              onChange: (event) => setEdits({ ...edits, actions: event.target.value })
+                            })),
+                          h("label", { className: "dsh-retro-field" }, "关键经验",
+                            h("textarea", {
+                              value: edits.lessons,
+                              onChange: (event) => setEdits({ ...edits, lessons: event.target.value })
+                            })),
+                          h("button", {
+                            className: "dsh-retro-btn", disabled: busy,
+                            onClick: () => saveEdits()
+                          }, busy ? "保存中…" : "保存修改到暂存区")
+                        )
+                        : null
+                    )
                 )
           ),
           selected.type === "card"
@@ -602,8 +782,14 @@ window.__ModuleLoader__.load({
             : h("div", { className: "dsh-retro-detail-foot" },
               h("button", {
                 className: "dsh-retro-btn",
-                onClick: () => copyText(`/retro adopt ${selected.id}`, toast)
-              }, "复制采纳命令")
+                onClick: adoptCurrent
+              }, writeApiEnabled ? "采纳此提案" : "复制采纳命令"),
+              detail?.meta?.duplicateOf
+                ? h("button", {
+                  className: "dsh-retro-btn",
+                  onClick: () => copyText(`/retro review ${detail.meta.duplicateOf.id} discard`, toast)
+                }, "复制丢弃重复项")
+                : null
             )
         );
       }

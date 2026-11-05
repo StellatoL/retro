@@ -4,7 +4,7 @@ import path from "node:path";
 import { readStaging, proposalsRoot, entriesRoot } from "./settler.js";
 import { computeContentHash, verifyNoteScope, RetroError } from "./guard.js";
 import { readOptional } from "./util.js";
-import { proposalTarget } from "./evolvor.js";
+import { proposalTarget, proposalSimilarity, extractProposalContent } from "./evolvor.js";
 
 /** 笔记预览的体积上限：超出部分截断并标记，避免一次响应过大。 */
 const MAX_NOTE_BYTES = 262144;
@@ -192,10 +192,26 @@ export function createQueryService({ store, cfg }) {
         const proposal = store.getProposal(id);
         if (!proposal) throw new RetroError("RETRO_ENTITY_NOT_FOUND", `提案不存在：${id}`, { status: 404 });
         let rawMarkdown = null;
+        let patchContent = "";
         if (proposal.relPath) {
-          try { rawMarkdown = readStaging(cfg, proposal.relPath); } catch { rawMarkdown = null; }
+          try {
+            rawMarkdown = readStaging(cfg, proposal.relPath);
+            patchContent = extractProposalContent(rawMarkdown);
+          } catch { rawMarkdown = null; }
         }
         const target = proposalTarget(proposal.kind);
+        const existing = target ? readOptional(target.path) : undefined;
+        // 重复项提示：与其余待采纳提案做 bigram Jaccard 比较，取最高分。
+        let duplicate = null;
+        for (const other of store.listProposals("pending")) {
+          if (other.id === proposal.id || other.kind !== proposal.kind) continue;
+          const similarity = proposalSimilarity(proposal, other);
+          if (similarity >= 0.3 && (!duplicate || similarity > duplicate.similarity)) {
+            duplicate = { id: other.id, title: other.title, similarity: Number(similarity.toFixed(2)) };
+          }
+        }
+        const appendedLines = patchContent ? patchContent.split(/\r?\n/) : [];
+        const existingTail = existing ? existing.trimEnd().split(/\r?\n/).slice(-5) : [];
         return {
           ok: true,
           type: "proposal",
@@ -206,7 +222,15 @@ export function createQueryService({ store, cfg }) {
             reason: proposal.reason ?? null,
             status: proposal.status,
             relPath: proposal.relPath ?? null,
-            targetFile: target?.path ?? null
+            targetFile: target?.path ?? null,
+            targetExists: existing !== undefined,
+            duplicateOf: duplicate
+          },
+          preview: {
+            // 追加型提案：只展示将新增的行与目标文件末尾上下文，足以人工审阅。
+            appendedLines,
+            existingTail,
+            changedLines: appendedLines.length
           },
           rawMarkdown
         };

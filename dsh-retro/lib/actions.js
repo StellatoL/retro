@@ -8,13 +8,15 @@ import {
   settleEntry,
   draftEntryFile,
   readStaging,
+  writeStaging,
   splitCardFile,
   stripQuestionsSection,
   extractEntryFromCard,
   stagingRoot
 } from "./settler.js";
 import { adoptProposal as adoptProposalFile, dedupeProposals, updateMoc } from "./evolvor.js";
-import { safeJoin } from "./util.js";
+import { safeJoin, patchMarkdownSections } from "./util.js";
+import { computeContentHash } from "./guard.js";
 
 /**
  * 创建动作服务。
@@ -87,15 +89,20 @@ export function createActionService({ store, cfg, logger = null }) {
 
     /**
      * 采纳规则提案；target 为 "all" 时先按文本相似度去重，每组只采纳代表。
+     * 也可显式传 ids 数组批量采纳指定提案。
+     * @param {{ target?: string, ids?: string[], actor?: string }} input
      * @returns {{ ok: boolean, message: string, adopted: string[], skipped: string[] }}
      */
-    adopt({ target, actor = "command:adopt" }) {
-      const hasAll = target === "all";
+    adopt({ target, ids, actor = "command:adopt" }) {
+      const explicitIds = Array.isArray(ids) ? ids.filter((id) => typeof id === "string" && id) : null;
+      const hasAll = !explicitIds && target === "all";
       const adopted = [];
       const skipped = [];
       const skippedLines = [];
       let proposals;
-      if (hasAll) {
+      if (explicitIds) {
+        proposals = explicitIds.map((id) => store.getProposal(id)).filter(Boolean);
+      } else if (hasAll) {
         const pending = store.listProposals("pending").filter((p) => p.kind !== "retro-suggest");
         const groups = dedupeProposals(pending);
         proposals = groups.map((g) => g.representative);
@@ -110,7 +117,8 @@ export function createActionService({ store, cfg, logger = null }) {
         proposals = [store.getProposal(target)].filter(Boolean);
       }
       if (proposals.length === 0) {
-        return { ok: false, message: `没有可采纳的提案：${target}`, adopted, skipped };
+        const label = explicitIds ? explicitIds.join(", ") : target;
+        return { ok: false, message: `没有可采纳的提案：${label}`, adopted, skipped };
       }
       const lines = [];
       for (const proposal of proposals) {
@@ -127,6 +135,28 @@ export function createActionService({ store, cfg, logger = null }) {
         store.audit({ actor, action: "adopt", target: adopted.join(", "), ok: true, note: `跳过 ${skipped.length}` });
       }
       return { ok: true, message: lines.join("\n"), adopted, skipped };
+    },
+
+    /**
+     * 把面板上的字段修改/答疑写回暂存 Markdown（非破坏性局部替换），并更新内容哈希。
+     * 只写暂存区，不触碰正式笔记，符合"正式落库必须人工确认"的分层。
+     * @param {{ id: string, sections?: Record<string,string>, answers?: Array<{question:string,answer:string}>, actor?: string }} input
+     * @returns {{ ok: boolean, message: string, contentHash: string }}
+     */
+    patchCard({ id, sections = {}, answers = [], actor = "command:review" }) {
+      const card = store.getCard(id);
+      if (!card) throw new Error(`卡片不存在：${id}`);
+      if (!card.stagingPath) throw new Error(`卡片 ${id} 没有暂存文件，无法内联修改`);
+      const original = readStaging(cfg, card.stagingPath);
+      const next = patchMarkdownSections(original, { sections, answers });
+      const contentHash = computeContentHash(next);
+      if (next === original) {
+        return { ok: true, message: "内容未变化，已跳过写入", contentHash };
+      }
+      writeStaging(cfg, card.stagingPath, next, { store, actor });
+      store.updateCard(card.id, { contentHash });
+      store.audit({ actor, action: "patch-staging", target: card.stagingPath, ok: true, note: `sections=${Object.keys(sections).join(",") || "-"}` });
+      return { ok: true, message: `已更新暂存文件：${card.stagingPath}`, contentHash };
     },
 
     /**

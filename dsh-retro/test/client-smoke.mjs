@@ -38,27 +38,47 @@ globalThis.document = {
 };
 
 let fetched = [];
+let writeApiEnabled = false;
+let postedBody = null;
 globalThis.fetch = async (url, options) => {
   fetched.push({ url: String(url), method: options?.method ?? "GET" });
-  if (String(url).startsWith("/retro/detail")) {
+  if (String(url) === "/retro/action") {
+    postedBody = JSON.parse(options?.body ?? "{}");
     return {
       ok: true,
       status: 200,
-      json: async () => ({
-        ok: true,
-        type: "card",
-        id: "rc-1",
-        meta: {
-          title: "草稿卡",
-          status: "drafted",
-          stagingPath: "rc-1.md",
-          note: "Index/06_Retro/_retro/rc-1.md",
-          questions: [],
-          sessionIds: []
-        },
-        contentHash: "abcdef1234567890",
-        rawMarkdown: "# 草稿卡\n\n## 行动项\n\n- 修复 X\n"
-      })
+      json: async () => ({ ok: true, rev: 9, action: postedBody.action, result: { adopted: postedBody.ids ?? [], skipped: [], message: "已采纳" } })
+    };
+  }
+  if (String(url).startsWith("/retro/detail")) {
+    const isProposal = String(url).includes("type=proposal");
+    return {
+      ok: true,
+      status: 200,
+      json: async () => isProposal
+        ? {
+          ok: true,
+          type: "proposal",
+          id: "prop-1",
+          meta: { kind: "skill", title: "规则提案", targetFile: "/home/.dsh/skills/retro-writing/SKILL.md", targetExists: true, duplicateOf: null, relPath: "_proposals/prop-1.md" },
+          preview: { appendedLines: ["## 规则", "- 内容"], existingTail: ["# 既有正文"], changedLines: 2 },
+          rawMarkdown: ""
+        }
+        : {
+          ok: true,
+          type: "card",
+          id: "rc-1",
+          meta: {
+            title: "草稿卡",
+            status: "drafted",
+            stagingPath: "rc-1.md",
+            note: "Index/06_Retro/_retro/rc-1.md",
+            questions: [],
+            sessionIds: []
+          },
+          contentHash: "abcdef1234567890",
+          rawMarkdown: "# 草稿卡\n\n## 行动项\n\n- 修复 X\n"
+        }
     };
   }
   return {
@@ -67,7 +87,7 @@ globalThis.fetch = async (url, options) => {
     json: async () => ({
       generatedAt: new Date().toISOString(),
       rev: 7,
-      writeApiEnabled: false,
+      writeApiEnabled,
       vaultName: "Obsidian_Stw",
       stats: { cards: 2, draftedCards: 2, approvedCards: 0, proposals: 1, pendingProposals: 1, entries: 0, draftedEntries: 0, publish: 0, publishedPosts: 0, materials: 0, weeklyCount: 0 },
       queue: {
@@ -312,4 +332,58 @@ test("卸载时清理样式、按钮与数据通道", async (t) => {
   ctx._dispose();
   assert.ok(style.removed, "卸载时必须移除样式");
   assert.ok(created.filter((el) => el.className === "dsh-retro-toast").every((el) => el.removed));
+});
+
+test("提案视图展示追加 Diff，并可批量采纳", async (t) => {
+  created.length = 0;
+  fetched = [];
+  postedBody = null;
+  writeApiEnabled = true;
+  const registered = [];
+  const slots = {
+    inject(key, cb) { cb(); },
+    register(spec, component) { registered.push({ spec, component }); return () => {}; }
+  };
+  const ctx = startClient(t, { slots });
+  await wait(10);
+  const main = registered.find((row) => row.spec.name === "main");
+
+  // 切到提案视图
+  let tree = expand({ type: main.component, props: {}, children: [] });
+  const proposalTab = findByClass(tree, "dsh-retro-tab").find((node) => textOf(node).includes("提案"));
+  assert.ok(proposalTab, "应有提案视图入口");
+  proposalTab.props.onClick();
+  tree = expand({ type: main.component, props: {}, children: [] });
+
+  // 打开提案详情：展示目标文件与将追加的行
+  const rows = findByClass(tree, "dsh-retro-row");
+  assert.equal(rows.length, 1);
+  await rows[0].props.onClick();
+  await wait(10);
+  tree = expand({ type: main.component, props: {}, children: [] });
+  const detailText = textOf(findByClass(tree, "dsh-retro-detail")[0]);
+  assert.ok(detailText.includes("将追加的内容"));
+  assert.ok(detailText.includes("+ ## 规则"));
+  assert.ok(detailText.includes("SKILL.md"));
+
+  // 勾选后出现批量采纳按钮，点击走写接口
+  const checkbox = findByClass(tree, "dsh-retro-row")
+    .map((row) => findByClass(row, "dsh-retro-row")[0])
+    .filter(Boolean)[0];
+  assert.ok(checkbox, "提案行存在");
+  let checkNode = null;
+  walk(tree, (node) => { if (node.type === "input" && node.props?.type === "checkbox") checkNode = node; });
+  assert.ok(checkNode, "提案行应提供勾选框");
+  checkNode.props.onChange();
+  tree = expand({ type: main.component, props: {}, children: [] });
+  const adoptButton = findByClass(tree, "dsh-retro-btn").find((node) => textOf(node).includes("批量采纳"));
+  assert.ok(adoptButton, "勾选后应出现批量采纳按钮");
+  await adoptButton.props.onClick();
+  await wait(10);
+  assert.ok(postedBody, "应调用写接口");
+  assert.equal(postedBody.action, "proposal.adopt");
+  assert.deepEqual(postedBody.ids, ["prop-1"]);
+
+  writeApiEnabled = false;
+  ctx._dispose();
 });

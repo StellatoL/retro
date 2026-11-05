@@ -1,5 +1,13 @@
 # 变更记录
 
+## 未发布（0.7.0 开发中）
+
+- P1 提案审阅：`GET /retro/detail?type=proposal` 返回将追加的行、目标文件末尾上下文、目标是否存在与相似提案提示（bigram Jaccard）。
+- P1 批量采纳：`POST /retro/action` 新增 `proposal.adopt`（支持 `ids` 数组或 `all`，`all` 仍按相似度去重并标记 skipped）。
+- P1 内联编辑：新增 `card.patch` 动作与 `actions.patchCard`，按二级标题局部写回暂存文件并更新 `contentHash`，同样受乐观锁保护。
+- 客户端：提案视图展示追加 Diff 与重复警告、勾选批量采纳；卡片详情支持行动项/关键经验内联编辑并保存到暂存区；列表支持 j/k/方向键与 Enter/Esc 键盘操作。
+- 新增 5 项 P1 后端单测与 1 项客户端冒烟（提案 Diff + 批量采纳）。
+
 ## 0.6.0 — 2026-11-05
 
 - P0 基础层：新增 `lib/guard.js`（跨进程 `store.lock`、内容哈希、写前 `.bak` 备份、笔记读取作用域）。

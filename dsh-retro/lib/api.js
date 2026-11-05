@@ -88,8 +88,8 @@ export function registerDetailApi(ctx, store, cfg = {}) {
 // 且复用 lib/actions.js 与 CLI 完全相同的实现，避免两条入口行为漂移。
 // ---------------------------------------------------------------------------
 
-/** P0 阶段允许通过 HTTP 触发的动作白名单。 */
-const WRITE_ACTIONS = new Set(["card.review"]);
+/** P0/P1 阶段允许通过 HTTP 触发的动作白名单。 */
+const WRITE_ACTIONS = new Set(["card.review", "card.patch", "proposal.adopt"]);
 
 /** 读取并解析 JSON 请求体，限制体积避免内存放大。 */
 function readJsonBody(req, limit = 1 << 20) {
@@ -139,6 +139,20 @@ function sendJson(res, status, payload) {
  */
 export function registerActionApi(ctx, store, cfg = {}, { lockDir = store.dir } = {}) {
   const service = createActionService({ store, cfg });
+
+  /** 乐观锁校验：客户端持有的哈希必须与暂存文件当前内容一致。 */
+  const ensureHashMatches = (stagingPath, expectedHash) => {
+    let currentHash = null;
+    try { currentHash = computeContentHash(readStaging(cfg, stagingPath)); } catch { currentHash = null; }
+    if (currentHash !== null && currentHash !== expectedHash) {
+      throw new RetroError("RETRO_CONFLICT_HASH", "暂存文件已被外部修改", {
+        status: 409,
+        hint: "请刷新详情后重试",
+        retryable: true
+      });
+    }
+  };
+
   return ctx.inject(["webServer"], (childCtx) => {
     childCtx.effect(() => childCtx.webServer.register({
       kind: "exact",
@@ -158,35 +172,67 @@ export function registerActionApi(ctx, store, cfg = {}, { lockDir = store.dir } 
             });
           }
           const body = await readJsonBody(req);
-          // 2) 动作白名单：P0 仅支持卡片审阅。
           if (!WRITE_ACTIONS.has(body.action)) {
             throw new RetroError("RETRO_ACTION_NOT_ALLOWED", `不支持的写动作：${String(body.action)}`, {
               status: 400,
-              hint: "P0 仅支持 card.review"
+              hint: "可用：card.review / card.patch / proposal.adopt"
             });
           }
+
+          if (body.action === "proposal.adopt") {
+            // 批量采纳：ids 数组或 "all"（后者按相似度去重，每组只采纳代表）。
+            const ids = Array.isArray(body.ids) ? body.ids.filter((id) => typeof id === "string" && id) : undefined;
+            if (!ids?.length && body.all !== true) {
+              throw new RetroError("RETRO_BAD_REQUEST", "需要 ids 数组或 all:true", { status: 400 });
+            }
+            const result = await withStoreLock(lockDir, async () => service.adopt({
+              ids,
+              target: body.all === true ? "all" : undefined,
+              actor: "web:user"
+            }));
+            sendJson(res, result.ok ? 200 : 400, {
+              ok: result.ok,
+              rev: store.getRev(),
+              action: body.action,
+              result: { adopted: result.adopted, skipped: result.skipped, message: result.message }
+            });
+            return;
+          }
+
           if (typeof body.id !== "string" || !body.id) {
             throw new RetroError("RETRO_BAD_REQUEST", "缺少卡片 id", { status: 400 });
           }
+
+          if (body.action === "card.patch") {
+            // 内联编辑：只写暂存区，保留用户手写章节；同样受乐观锁保护。
+            const card = store.getCard(body.id);
+            if (!card) throw new RetroError("RETRO_ENTITY_NOT_FOUND", `卡片不存在：${body.id}`, { status: 404 });
+            if (body.expectedHash && card.stagingPath) ensureHashMatches(card.stagingPath, body.expectedHash);
+            const result = await withStoreLock(lockDir, async () => service.patchCard({
+              id: body.id,
+              sections: body.sections && typeof body.sections === "object" ? body.sections : {},
+              answers: Array.isArray(body.answers) ? body.answers : [],
+              actor: "web:user"
+            }));
+            sendJson(res, 200, {
+              ok: true,
+              rev: store.getRev(),
+              action: body.action,
+              id: body.id,
+              result: { message: result.message, contentHash: result.contentHash }
+            });
+            return;
+          }
+
           const subAction = body.subAction ?? "keep";
           if (!["keep", "discard", "edit"].includes(subAction)) {
             throw new RetroError("RETRO_BAD_REQUEST", `未知子动作：${String(subAction)}`, { status: 400 });
           }
-          // 3) 乐观锁：客户端持有哈希时必须与磁盘一致，避免覆盖 Obsidian 里的手改。
+          // 乐观锁：客户端持有哈希时必须与磁盘一致，避免覆盖 Obsidian 里的手改。
           const card = store.getCard(body.id);
           if (!card) throw new RetroError("RETRO_ENTITY_NOT_FOUND", `卡片不存在：${body.id}`, { status: 404 });
-          if (body.expectedHash && card.stagingPath) {
-            let currentHash = null;
-            try { currentHash = computeContentHash(readStaging(cfg, card.stagingPath)); } catch { currentHash = null; }
-            if (currentHash !== null && currentHash !== body.expectedHash) {
-              throw new RetroError("RETRO_CONFLICT_HASH", "暂存文件已被外部修改", {
-                status: 409,
-                hint: "请刷新详情后重试",
-                retryable: true
-              });
-            }
-          }
-          // 4) 串行化写入：进程内队列 + 跨进程锁，与命令路径共用。
+          if (body.expectedHash && card.stagingPath) ensureHashMatches(card.stagingPath, body.expectedHash);
+          // 串行化写入：进程内队列 + 跨进程锁，与命令路径共用。
           const result = await withStoreLock(lockDir, async () => service.reviewCard({
             id: body.id,
             subAction,
