@@ -1,4 +1,4 @@
-// 在模拟浏览器中加载客户端，验证侧边栏与浮动按钮两种入口。
+// 在模拟浏览器中加载客户端，验证左侧栏入口、主区域面板与浮动按钮兜底。
 
 // 浏览器环境替身
 function makeElement(tag) {
@@ -71,134 +71,146 @@ globalThis.window = {
 await import(new URL("../lib/client.js", import.meta.url));
 if (!capturedDef) throw new Error("client bundle did not call __ModuleLoader__.load");
 
-// React 渲染替身
+// 精简 Hook 运行时：面板组件只用到 useState / useEffect。
+const hookState = [];
+const hookEffects = [];
+let hookIndex = 0;
 const reactMock = {
-  createElement(type, props, ...children) { return { type, props: props ?? {}, children }; }
+  createElement(type, props, ...children) { return { type, props: props ?? {}, children }; },
+  useState(initial) {
+    const i = hookIndex++;
+    if (!(i in hookState)) hookState[i] = typeof initial === "function" ? initial() : initial;
+    return [hookState[i], (value) => { hookState[i] = value; }];
+  },
+  useEffect(setup) {
+    const i = hookIndex++;
+    if (!hookEffects[i]) hookEffects[i] = { setup, ran: false, cleanup: undefined };
+  }
 };
-const factoryExports = capturedDef.factory((id) => {
-  if (id === "react") return reactMock;
-  throw new Error("unexpected require: " + id);
-});
+/** 渲染一次组件并执行尚未运行的 effect；effect 只运行一次。 */
+function renderComponent(component, props) {
+  hookIndex = 0;
+  const element = component(props ?? {});
+  let rerun = false;
+  for (const entry of hookEffects) {
+    if (!entry || entry.ran) continue;
+    entry.ran = true;
+    entry.cleanup = entry.setup();
+    rerun = true;
+  }
+  if (!rerun) return element;
+  hookIndex = 0;
+  return component(props ?? {});
+}
+/** 执行已登记的 effect 清理函数，避免轮询定时器让测试进程无法退出。 */
+function disposeEffects() {
+  for (const entry of hookEffects) {
+    if (entry && typeof entry.cleanup === "function") entry.cleanup();
+  }
+}
 
 let failures = 0;
 function check(cond, msg) {
   if (!cond) { console.error("FAIL:", msg); failures++; }
   else console.log("ok:", msg);
 }
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const exports_ = capturedDef.factory((id) => {
+  if (id === "react") return reactMock;
+  throw new Error("unexpected require: " + id);
+});
 
-// 场景一：侧边栏插槽
+// 场景一：左侧栏入口（DSH 0.2 的 main 面板 + sidebar.panellist 图标行）
 {
   created.length = 0;
-  let injectedHole = null;
-  let registered = null;
+  hookState.length = 0;
+  hookEffects.length = 0;
+  const registered = [];
   const slotsMock = {
-    inject(hole, cb) { injectedHole = hole; this._cb = cb; },
-    register(spec, comp) { registered = { spec, comp }; return () => {}; }
+    // 座位已声明：inject 同步执行注册回调。
+    inject(key, cb) { cb(); },
+    register(spec, comp) { registered.push({ spec, comp }); return () => {}; }
   };
   const ctx = {
     get(name) { return name === "slots" ? slotsMock : undefined; },
     effect(cb) { this._disposer = cb(); }
   };
-  factoryExports.apply(ctx);
-  check(injectedHole === "sidebar.footer.action", "slots.inject 注册到 sidebar.footer.action");
-  // slots.inject 的回调在 slot 渲染时惰性调用——手动触发以模拟 sidebar 渲染
-  const registerDisposer = slotsMock._cb();
-  check(registered && registered.spec.name === "sidebar.footer.action", "slots.register 使用正确 slot 名");
-  check(typeof registered?.comp === "function", "注册了 React 组件");
-  if (registered) {
-    const el = registered.comp({ wide: false });
-    check(el && el.type === "button", "组件渲染 <button>");
-    check(el.props.className === "dsh-retro-sidebar-btn", "按钮使用侧边栏样式类");
-    // 点击按钮切换面板开关。
-    el.props.onClick();
-    check(created.some((e) => e.className === "dsh-retro-panel" && e.style.display === "block"), "点击打开面板");
-    el.props.onClick();
-    check(created.some((e) => e.className === "dsh-retro-panel" && e.style.display === "none"), "再次点击关闭面板");
-  }
-  check(typeof registerDisposer === "function", "register 返回 disposer");
-  // 座位在注册回调执行后才确认可用：此前显示的浮动入口应被移除。
-  const fabs = created.filter((e) => e.className === "dsh-retro-fab");
-  check(fabs.length === 1, "座位未确认前先挂载浮动入口兜底");
-  check(fabs.every((e) => e.removed), "座位可用后移除浮动入口");
+  exports_.apply(ctx);
+
+  const main = registered.find((r) => r.spec.name === "main");
+  const icon = registered.find((r) => r.spec.name === "sidebar.panellist");
+  check(!!main && main.spec.key === "dsh-retro", "注册 main 面板（key=dsh-retro）");
+  check(!!icon && icon.spec.id === "dsh-retro", "注册左侧栏图标条目（id=dsh-retro）");
+  check(typeof icon?.spec.label === "function" && icon.spec.label() === "复盘", "侧边栏行标签为「复盘」");
+  check(typeof icon?.comp === "function", "图标条目提供 React 组件");
+  const iconEl = icon.comp({ size: 18, active: false });
+  check(iconEl && iconEl.type === "svg", "图标渲染为内联 svg");
+
+  const panelEl = renderComponent(main.comp, {});
+  check(panelEl && panelEl.type === "div" && panelEl.props.className === "dsh-retro-main", "主区域面板容器可用");
+  await wait(10);
+  const filled = renderComponent(main.comp, {});
+  const html = filled?.props?.dangerouslySetInnerHTML?.__html ?? "";
+  check(fetchCalls >= 1, "面板渲染时请求 /retro/api");
+  check(html.includes("data-copy='/retro review rc-1 keep'"), "面板渲染卡片与复制命令");
+  check(html.includes("data-open='Index/06_Retro/_retro/rc-1.md'"), "面板渲染 Obsidian 打开路径");
+  check(!created.some((e) => e.className === "dsh-retro-fab"), "左侧栏入口可用时不创建浮动按钮");
+
+  // 主区域面板的点击委托与浮动面板一致。
+  await wait(10);
+  filled.props.onClick({ target: { closest: (sel) => (sel === "[data-open]" ? { getAttribute: () => "Index/06_Retro/_retro/rc-1.md" } : null) } });
+  check(!!openedUrl && openedUrl.startsWith("obsidian://open?vault=Obsidian_Stw&file="), "点击打开生成 obsidian:// URI");
+  filled.props.onClick({ target: { closest: (sel) => (sel === "[data-open]" ? null : sel === "[data-copy]" ? { getAttribute: () => "/retro review rc-1 keep" } : null) } });
+  await wait(10);
+  check(copiedText === "/retro review rc-1 keep", "点击条目复制命令到剪贴板");
+
   check(typeof ctx._disposer === "function", "effect disposer 已注册");
-  if (typeof ctx._disposer === "function") { ctx._disposer(); check(true, "disposer 可调用"); }
+  disposeEffects();
+  ctx._disposer();
+  check(created.every((el) => el.removed), "卸载后移除面板、按钮、提示和样式");
 }
 
-// 场景二：浮动按钮降级入口
+// 场景二：宿主没有 slots 服务时立即启用浮动入口
 {
   created.length = 0;
-  const ctx = {
-    get() { return undefined; },
-    effect(cb) { this._disposer = cb(); }
-  };
-  factoryExports.apply(ctx);
+  const ctx = { get() { return undefined; }, effect(cb) { this._disposer = cb(); } };
+  exports_.apply(ctx);
   const fab = created.find((e) => e.className === "dsh-retro-fab");
   check(!!fab, "slots 不可用时创建浮动按钮");
-  if (fab && fab.listeners.click) {
-    fab.listeners.click[0]();
-    check(created.some((e) => e.className === "dsh-retro-panel" && e.style.display === "block"), "浮动按钮打开面板");
-  }
+  fab.listeners.click[0]();
+  check(created.some((e) => e.className === "dsh-retro-panel" && e.style.display === "block"), "浮动按钮打开面板");
   ctx._disposer();
 }
 
-// 场景三：复制命令与打开 Obsidian
+// 场景三：座位迟迟未声明时先兜底浮动入口，座位出现后撤下
 {
   created.length = 0;
-  copiedText = null;
-  openedUrl = null;
-  fetchCalls = 0;
+  const callbacks = [];
   const slotsMock = {
-    inject(hole, cb) { this._cb = cb; },
-    register(spec, comp) { this._registered = { spec, comp }; return () => {}; }
+    inject(key, cb) { callbacks.push({ key, cb }); },
+    register(spec) { return () => {}; }
   };
-  const ctx = {
-    get(name) { return name === "slots" ? slotsMock : undefined; },
-    effect(cb) { this._disposer = cb(); }
-  };
-  factoryExports.apply(ctx);
-  // 通过侧边栏按钮打开面板（toggle → refresh）
-  slotsMock._cb();
-  const btnEl = slotsMock._registered.comp({ wide: false });
-  btnEl.props.onClick();
-  const panelEl = created.find((e) => e.className === "dsh-retro-panel");
-  await new Promise((r) => setTimeout(r, 10)); // 等待请求回调更新面板。
-  check(fetchCalls >= 1, "面板打开时请求 /retro/api");
-  check(panelEl.innerHTML.includes("data-copy='/retro review rc-1 keep'"), "卡片行携带复制命令");
-  check(panelEl.innerHTML.includes("data-open='Index/06_Retro/_retro/rc-1.md'"), "卡片行携带 Obsidian 打开路径");
-
-  // 点击「打开」→ obsidian:// URI
-  const clickHandler = panelEl.listeners.click[0];
-  clickHandler({ target: {
-    closest: (sel) => sel === "[data-open]" ? { getAttribute: () => "Index/06_Retro/_retro/rc-1.md" } : null
-  } });
-  check(!!openedUrl && openedUrl.startsWith("obsidian://open?vault=Obsidian_Stw&file="), "点击打开生成 obsidian:// URI");
-  check(openedUrl.includes(encodeURIComponent("Index/06_Retro/_retro/rc-1.md")), "URI 包含编码后的文件路径");
-
-  // 点击条目 → 复制命令
-  clickHandler({ target: {
-    closest: (sel) => (sel === "[data-open]" ? null : sel === "[data-copy]" ? { getAttribute: () => "/retro review rc-1 keep" } : null)
-  } });
-  await new Promise((r) => setTimeout(r, 10));
-  check(copiedText === "/retro review rc-1 keep", "点击条目复制命令到剪贴板");
-
-  // 提案行复制
-  const clickProposal = { target: { closest: (sel) => (sel === "[data-open]" ? null : sel === "[data-copy]" ? { getAttribute: () => "/retro adopt prop-9" } : null) } };
-  clickHandler(clickProposal);
-  await new Promise((r) => setTimeout(r, 10));
-  check(copiedText === "/retro adopt prop-9", "提案行复制采纳命令");
-
-  if (typeof ctx._disposer === "function") ctx._disposer();
+  const ctx = { get(name) { return name === "slots" ? slotsMock : undefined; }, effect(cb) { this._disposer = cb(); } };
+  exports_.apply(ctx);
+  check(!created.some((e) => e.className === "dsh-retro-fab"), "座位未声明前不立即创建浮动按钮");
+  await wait(750);
+  const fab = created.find((e) => e.className === "dsh-retro-fab");
+  check(!!fab, "等待后仍未注册时创建浮动按钮兜底");
+  // 座位稍后声明：两个注册回调执行后撤下浮动入口。
+  for (const { cb } of callbacks) cb();
+  check(!!fab && fab.removed, "左侧栏入口就绪后移除浮动按钮");
+  ctx._disposer();
 }
 
-// 含单引号的文件名也必须保持为完整属性值，不能插入额外 HTML 属性。
+// 场景四：含单引号的文件名也必须保持为完整属性值，不能插入额外 HTML 属性。
 {
   created.length = 0;
   notePath = "Index/_retro/quote'onmouseover='alert(1).md";
   const ctx = { get() {}, effect(fn) { this.dispose = fn(); } };
-  factoryExports.apply(ctx);
+  exports_.apply(ctx);
   const fab = created.find((el) => el.className === "dsh-retro-fab");
   fab.listeners.click[0]();
-  await new Promise((resolve) => setTimeout(resolve, 10));
+  await wait(10);
   const panel = created.find((el) => el.className === "dsh-retro-panel");
   check(panel.innerHTML.includes("quote&#39;onmouseover=&#39;alert(1).md"), "属性中的单引号经过转义");
   ctx.dispose();

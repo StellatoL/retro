@@ -17,8 +17,6 @@ window.__ModuleLoader__.load({
     var PANEL_CSS = [
       ".dsh-retro-fab{position:fixed;right:16px;bottom:16px;z-index:2147483000;background:var(--dsw-alias-accent,#3b82f6);color:#fff;border:none;border-radius:999px;padding:9px 16px;font-size:13px;cursor:pointer;box-shadow:0 2px 10px rgba(0,0,0,.35);font-family:var(--dsw-font-family,system-ui)}",
       ".dsh-retro-fab:hover{filter:brightness(1.1)}",
-      ".dsh-retro-sidebar-btn{display:flex;align-items:center;gap:6px;width:100%;background:none;border:none;color:var(--dsw-alias-label-secondary,#c9ced8);cursor:pointer;font-size:13px;padding:6px 8px;border-radius:8px;font-family:var(--dsw-font-family,system-ui)}",
-      ".dsh-retro-sidebar-btn:hover{background:var(--dsw-alias-interactive-bg-hover-solid,rgba(255,255,255,.06));color:var(--dsw-alias-label-primary,#e6e8ee)}",
       ".dsh-retro-panel{display:none;position:fixed;right:16px;bottom:60px;z-index:2147483001;width:430px;max-height:72vh;overflow:auto;background:var(--dsw-alias-bg-base,#161a22);color:var(--dsw-alias-label-primary,#e6e8ee);border:1px solid var(--dsw-alias-border-l1,#ffffff22);border-radius:12px;padding:14px 16px;box-shadow:0 10px 36px rgba(0,0,0,.45);font-family:var(--dsw-font-family,system-ui);font-size:13px;line-height:1.5}",
       ".dsh-retro-panel h2{margin:10px 0 6px;font-size:13px;color:var(--dsw-alias-label-secondary,#c9ced8)}",
       ".dsh-retro-panel h2:first-child{margin-top:0}",
@@ -37,7 +35,11 @@ window.__ModuleLoader__.load({
       ".dsh-retro-open{background:none;border:none;color:var(--dsw-alias-label-tertiary,#8a8f98);cursor:pointer;font-size:12px;padding:0 4px;margin-left:auto;flex:none}",
       ".dsh-retro-open:hover{color:var(--dsw-alias-label-primary,#e6e8ee)}",
       ".dsh-retro-toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:2147483002;background:var(--dsw-alias-bg-soft,#1a1f29);color:var(--dsw-alias-label-primary,#e6e8ee);border:1px solid var(--dsw-alias-border-l1,#ffffff22);border-radius:8px;padding:8px 14px;font-size:12px;box-shadow:0 4px 16px rgba(0,0,0,.4);opacity:0;transition:opacity .2s;pointer-events:none;font-family:var(--dsw-font-family,system-ui)}",
-      ".dsh-retro-toast.dsh-retro-toast-show{opacity:1}"
+      ".dsh-retro-toast.dsh-retro-toast-show{opacity:1}",
+      // 主区域面板（左侧栏入口）：复用统计与列表样式，只补充容器与标题。
+      ".dsh-retro-main{height:100%;overflow:auto;padding:16px 18px;color:var(--dsw-alias-label-primary,#e6e8ee);font-family:var(--dsw-font-family,system-ui);font-size:13px;line-height:1.5}",
+      ".dsh-retro-main h2{margin:12px 0 6px;font-size:13px;color:var(--dsw-alias-label-secondary,#c9ced8)}",
+      ".dsh-retro-main h2:first-child{margin-top:0}"
     ].join("");
 
     function apply(ctx) {
@@ -184,13 +186,15 @@ window.__ModuleLoader__.load({
         window.open(url, "_blank");
         showToast("已在 Obsidian 中打开");
       }
-      panel.addEventListener("click", function (event) {
-        var t = event.target;
+      // 事件委托：点击条目复制命令 / 打开 Obsidian；浮动面板与主区域面板共用。
+      function handleItemClick(event) {
+        var t = event && event.target;
         var openTarget = t && typeof t.closest === "function" ? t.closest("[data-open]") : null;
         if (openTarget) { openObsidian(openTarget.getAttribute("data-open"), vaultName); return; }
         var copyTarget = t && typeof t.closest === "function" ? t.closest("[data-copy]") : null;
-        if (copyTarget) { copyText(copyTarget.getAttribute("data-copy")); return; }
-      });
+        if (copyTarget) copyText(copyTarget.getAttribute("data-copy"));
+      }
+      panel.addEventListener("click", handleItemClick);
 
       function cleanup() {
         disposed = true;
@@ -202,14 +206,18 @@ window.__ModuleLoader__.load({
         if (style) style.remove();
       }
 
-      // 入口优先级：优先注册到侧边栏座位，座位缺失时使用浮动按钮。
-      // 注意：slots.inject 对“未声明的座位”会静默等待而不会抛错（DSH 0.2 起
-      // 侧边栏不再声明 sidebar.footer.action），因此只有注册回调真正执行才算挂载成功；
-      // 同步未执行时先显示浮动按钮，座位稍后出现再由回调移除浮动入口。
+      // 左侧栏入口：DSH 0.2 的侧边栏由官方插件渲染面板行，插件只需注册
+      // `main` 面板（key 为面板 id）与 `sidebar.panellist` 图标条目（id 相同），
+      // 侧边栏即可渲染「复盘」行并在点击时切换主区域面板。
+      var PANEL_ID = "dsh-retro";
+      var FAB_DELAY_MS = 600;
       var slots = ctx.get("slots");
-      var mounted = false;
+      var panelRegistered = false;
+      var iconRegistered = false;
       var fab = null;
+      var fabTimer = null;
 
+      function entryReady() { return panelRegistered && iconRegistered; }
       function mountFab() {
         if (disposed || fab) return;
         fab = document.createElement("button");
@@ -220,35 +228,105 @@ window.__ModuleLoader__.load({
         document.body.appendChild(fab);
       }
       function unmountFab() {
-        if (fab) {
-          fab.remove();
-          fab = null;
-        }
+        if (fabTimer !== null) { clearTimeout(fabTimer); fabTimer = null; }
+        if (fab) { fab.remove(); fab = null; }
+      }
+      function maybeUnmountFab() { if (entryReady()) unmountFab(); }
+
+      /** 左侧栏图标行：由侧边栏传入 size/active，使用内联 SVG 避免额外依赖。 */
+      function RetroIcon(props) {
+        var size = (props && props.size) || 16;
+        return React.createElement(
+          "svg",
+          { width: size, height: size, viewBox: "0 0 16 16", "aria-hidden": "true", focusable: "false" },
+          React.createElement("path", { d: "M3 2.5h10v11H3z", fill: "none", stroke: "currentColor", strokeWidth: "1.2" }),
+          React.createElement("path", { d: "M5.5 6h5M5.5 8.5h5M5.5 11h3", stroke: "currentColor", strokeWidth: "1.2", strokeLinecap: "round" })
+        );
+      }
+
+      /** 主区域面板：复用同一份 HTML 渲染与轮询逻辑，点击行为与浮动面板一致。 */
+      function RetroPanel() {
+        var state = React.useState("<div class='dsh-retro-empty'>加载中…</div>");
+        var html = state[0];
+        var setHtml = state[1];
+        React.useEffect(function () {
+          var alive = true;
+          var timer = null;
+          function load() {
+            fetch("/retro/api", { headers: { accept: "application/json" } })
+              .then(function (res) {
+                if (!res.ok) throw new Error("HTTP " + res.status);
+                return res.json();
+              })
+              .then(function (data) {
+                if (!alive) return;
+                vaultName = data.vaultName || "";
+                setHtml(render(data));
+              })
+              .catch(function (error) {
+                if (!alive) return;
+                setHtml("<div style='color:var(--dsw-alias-state-error-primary,#ef4444)'>面板数据不可用：" + esc(error.message || error) + "</div>");
+              });
+          }
+          load();
+          timer = setInterval(load, REFRESH_MS);
+          return function () { alive = false; if (timer !== null) clearInterval(timer); };
+        }, []);
+        return React.createElement("div", {
+          className: "dsh-retro-main",
+          onClick: handleItemClick,
+          dangerouslySetInnerHTML: { __html: html }
+        });
       }
 
       if (slots && typeof slots.inject === "function") {
-        function RetroAction() {
-          return React.createElement(
-            "button",
-            { className: "dsh-retro-sidebar-btn", onClick: toggle, title: "dsh-retro 复盘面板" },
-            "\u{1F5C2} 复盘"
-          );
-        }
+        // slots.inject 仅在座位真正声明后才执行回调，因此用回调是否执行判断注册结果。
         try {
-          slots.inject("sidebar.footer.action", function () {
-            mounted = true;
-            unmountFab();
-            return slots.register(
-              { name: "sidebar.footer.action", inject: function () { return {}; } },
-              RetroAction
-            );
+          slots.inject("main", function () {
+            try {
+              var disposePanel = slots.register({ name: "main", key: PANEL_ID }, RetroPanel);
+              panelRegistered = true;
+              maybeUnmountFab();
+              return disposePanel;
+            } catch (error) {
+              panelRegistered = false;
+              return undefined;
+            }
           });
         } catch (error) {
-          mounted = false;
+          panelRegistered = false;
+        }
+        try {
+          slots.inject("sidebar.panellist", function () {
+            try {
+              var disposeIcon = slots.register({
+                name: "sidebar.panellist",
+                id: PANEL_ID,
+                order: 5,
+                label: function () { return "复盘"; }
+              }, RetroIcon);
+              iconRegistered = true;
+              maybeUnmountFab();
+              return disposeIcon;
+            } catch (error) {
+              iconRegistered = false;
+              return undefined;
+            }
+          });
+        } catch (error) {
+          iconRegistered = false;
         }
       }
-      // 座位未声明或注册失败：立即启用浮动入口，避免面板不可达。
-      if (!mounted) mountFab();
+
+      // 兜底：宿主没有侧边栏座位或注册失败时保留浮动入口；
+      // 延时等待晚到的座位声明，一旦左侧栏入口就绪就撤下浮动按钮。
+      if (!entryReady()) {
+        if (!slots) mountFab();
+        else fabTimer = setTimeout(function () {
+          fabTimer = null;
+          if (!entryReady()) mountFab();
+        }, FAB_DELAY_MS);
+      }
 
       ctx.effect(function () {
         return function () {

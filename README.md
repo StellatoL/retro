@@ -118,7 +118,7 @@ Two tools are available to the model: `retro_capture` records material, and `ret
 
 ## Web panel and reports
 
-The panel opens from a “复盘” (Retrospective) button in the Web sidebar where the host declares the sidebar footer seat. DSH 0.2 no longer declares that seat, so on current hosts the same panel opens from a floating “复盘” button in the lower-right corner; the floating entry is removed automatically if the seat appears later. While open, the panel refreshes statistics, cards awaiting review, entry drafts, pending proposals, recently saved notes and audit records every 30 seconds.
+The Web sidebar shows a “复盘” (Retrospective) row. The plugin registers a main-area panel and that sidebar row through the host slot API, so selecting the row opens the panel in the main area. When the host declares no sidebar slot, or registration fails, a floating “复盘” button in the lower-right corner opens the same panel instead; it disappears as soon as the sidebar row becomes available. While shown, the panel refreshes statistics, cards awaiting review, entry drafts, pending proposals, recently saved notes and audit records every 30 seconds.
 
 Click an item to copy its command, or use its file button to open the note through `obsidian://`. Run confirmation commands in the session. The browser's device must have Obsidian installed and access to a vault with the matching name.
 

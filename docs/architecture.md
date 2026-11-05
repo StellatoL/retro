@@ -1,6 +1,6 @@
 # 当前架构
 
-本文描述 `dsh-retro 0.4.0` 的现有实现。安装、配置与命令说明见 [English README](../README.md) 或[中文 README](../README.zh-CN.md)。
+本文描述 `dsh-retro 0.5.0` 的现有实现。安装、配置与命令说明见 [English README](../README.md) 或[中文 README](../README.zh-CN.md)。
 
 ## 入口与部署
 
@@ -107,7 +107,7 @@ LLM 请求使用 `createUserMessage` 构建内容块数组，经 `ctx.llm.stream
 
 `client.js` 按 `window.__ModuleLoader__.load({ id, factory })` 协议声明模块，在工厂中取得宿主提供的 React。它使用 DOM 展示面板，React 仅负责插槽按钮，不额外引入前端构建链。
 
-挂载时探测 `slots` 并调用 `slots.inject("sidebar.footer.action", …)`：该调用对未声明的座位会静默等待而不报错，因此只有注册回调真正执行才视为挂载成功。回调未同步执行时立即创建浮动按钮，座位稍后出现再由回调撤下浮动入口。DSH 0.2 的侧边栏不再声明该座位，当前宿主因此使用浮动入口。面板开启时每 30 秒读取 API，关闭时停止轮询；卸载时移除本次创建的面板、提示、按钮、样式和计时器，忽略晚到的异步更新。
+挂载时通过宿主插槽注册两个入口：`main` 面板（`key: dsh-retro`）与 `sidebar.panellist` 图标行（`id: dsh-retro`，标签“复盘”），由官方侧边栏渲染该行并在点击时切换主区域面板。`slots.inject` 只在座位真正声明后执行回调，因此以回调是否执行判断注册结果；两个入口都未就绪时，延迟 600 毫秒启用浮动按钮，入口就绪后自动撤下。面板开启时每 30 秒读取 API，关闭时停止轮询；卸载时移除本次创建的面板、提示、按钮、样式和计时器，忽略晚到的异步更新。
 
 API 路由位于 `/retro/api`，支持 GET/HEAD，其他方法返回 405 和 Allow 头。响应使用 `Cache-Control: no-store`。没有写入 API；复制命令与打开笔记在浏览器中完成。网络访问与鉴权沿用宿主设置，插件未另建认证服务。
 
