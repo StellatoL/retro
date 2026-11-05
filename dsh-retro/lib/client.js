@@ -38,7 +38,7 @@ window.__ModuleLoader__.load({
     // ---------------------------------------------------------------------
     var STYLE_ID = "dsh-retro-styles";
     var PANEL_CSS = [
-      ".dsh-retro-main{height:100%;display:flex;gap:0;color:var(--dsw-alias-label-primary,#e6e8ee);font-family:var(--dsw-font-family,system-ui);font-size:13px;line-height:1.5;overflow:hidden}",
+      ".dsh-retro-main{position:relative;height:100%;display:flex;gap:0;color:var(--dsw-alias-label-primary,#e6e8ee);font-family:var(--dsw-font-family,system-ui);font-size:13px;line-height:1.5;overflow:hidden}",
       ".dsh-retro-list{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;overflow:hidden}",
       ".dsh-retro-toolbar{display:flex;flex-wrap:wrap;gap:6px;padding:12px 16px;border-bottom:1px solid var(--dsw-alias-border-l1,#ffffff22);align-items:center}",
       ".dsh-retro-input,.dsh-retro-select{background:var(--dsw-alias-bg-soft,#1a1f29);color:inherit;border:1px solid var(--dsw-alias-border-l1,#ffffff22);border-radius:6px;padding:4px 8px;font:inherit;min-width:0}",
@@ -79,7 +79,9 @@ window.__ModuleLoader__.load({
       ".dsh-retro-toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:2147483002;background:var(--dsw-alias-bg-soft,#1a1f29);color:var(--dsw-alias-label-primary,#e6e8ee);border:1px solid var(--dsw-alias-border-l1,#ffffff22);border-radius:8px;padding:8px 14px;font-size:12px;opacity:0;transition:opacity .2s;pointer-events:none;font-family:var(--dsw-font-family,system-ui)}",
       ".dsh-retro-toast[data-show='true']{opacity:1}",
       ".dsh-retro-sb-icon{position:relative;display:inline-flex;align-items:center;justify-content:center}",
-      ".dsh-retro-sb-badge{position:absolute;top:-4px;right:-6px;min-width:12px;height:12px;padding:0 3px;border-radius:999px;background:var(--dsw-alias-accent,#3b82f6);color:#fff;font-size:9px;line-height:12px;text-align:center;font-family:var(--dsw-font-family,system-ui)}"
+      ".dsh-retro-sb-badge{position:absolute;top:-4px;right:-6px;min-width:12px;height:12px;padding:0 3px;border-radius:999px;background:var(--dsw-alias-accent,#3b82f6);color:#fff;font-size:9px;line-height:12px;text-align:center;font-family:var(--dsw-font-family,system-ui)}",
+      ".dsh-retro-palette{position:absolute;top:46px;left:16px;right:16px;z-index:5;background:var(--dsw-alias-bg-elevated,#1a1f29);border:1px solid var(--dsw-alias-border-l1,#ffffff22);border-radius:8px;padding:10px;box-shadow:0 10px 30px rgba(0,0,0,.35)}",
+      ".dsh-retro-palette-list{margin-top:8px;max-height:280px;overflow:auto}"
     ].join("");
 
     function ensureStyle() {
@@ -472,6 +474,27 @@ window.__ModuleLoader__.load({
       var snapshot = state.snapshot;
       var writeApiEnabled = snapshot?.writeApiEnabled === true;
 
+      // 命令面板（Ctrl/Cmd+K）：切换视图或跳转条目
+      var paletteState = React.useState(false);
+      var paletteOpen = paletteState[0];
+      var setPaletteOpen = paletteState[1];
+      var paletteQueryState = React.useState("");
+      var paletteQuery = paletteQueryState[0];
+      var setPaletteQuery = paletteQueryState[1];
+      React.useEffect(() => {
+        if (typeof document?.addEventListener !== "function") return undefined;
+        function onKeyDown(event) {
+          if ((event.ctrlKey || event.metaKey) && String(event.key).toLowerCase() === "k") {
+            event.preventDefault?.();
+            setPaletteOpen(true);
+            return;
+          }
+          if (event.key === "Escape") setPaletteOpen(false);
+        }
+        document.addEventListener("keydown", onKeyDown);
+        return () => document.removeEventListener("keydown", onKeyDown);
+      }, []);
+
       // 视图或筛选变化时重新拉取：卡片支持状态/关键字过滤，其余按 resource 拉列表。
       React.useEffect(() => {
         var query = { limit: String(PAGE_LIMIT) };
@@ -616,9 +639,11 @@ window.__ModuleLoader__.load({
       var rows = rowsFor(view);
 
       var toolbar = h("div", { className: "dsh-retro-toolbar" },
-        h("div", { className: "dsh-retro-tabs" }, VIEWS.map((entry) => h("button", {
+        h("div", { className: "dsh-retro-tabs", role: "tablist" }, VIEWS.map((entry) => h("button", {
           key: entry.key,
           className: "dsh-retro-tab",
+          role: "tab",
+          "aria-selected": String(view === entry.key),
           "data-active": String(view === entry.key),
           onClick: () => { setView(entry.key); setSelected(null); }
         }, entry.label))),
@@ -646,6 +671,16 @@ window.__ModuleLoader__.load({
           : null,
         state.transport === "polling" ? h("span", { className: "dsh-retro-mono" }, "轮询模式") : null
       );
+
+      // 洞察条：漏斗与传输模式（数据来自 snapshot.insights，不影响 0.5.0 的 stats）
+      var insights = snapshot?.insights;
+      var insightsStrip = insights
+        ? h("div", { className: "dsh-retro-toolbar", role: "status" },
+          h("span", { className: "dsh-retro-mono" }, `采纳率 ${Math.round((insights.funnel?.adoptionRate ?? 0) * 100)}%`),
+          h("span", { className: "dsh-retro-mono" }, `素材 ${insights.funnel?.captured ?? 0} → 卡片 ${insights.funnel?.cards ?? 0} → 落库 ${insights.funnel?.approved ?? 0}`),
+          h("span", { className: "dsh-retro-mono" }, state.transport === "sse" ? "实时推送" : state.transport === "polling" ? "轮询模式" : "连接中")
+        )
+        : null;
 
       var listBody;
       if (state.loading && !snapshot) {
@@ -831,9 +866,45 @@ window.__ModuleLoader__.load({
         );
       }
 
+      // 命令面板：切换视图 + 跳转当前列表条目（Ctrl/Cmd+K）
+      var paletteNode = null;
+      if (paletteOpen) {
+        var query = paletteQuery.trim().toLowerCase();
+        var commands = VIEWS.map((entry) => ({
+          key: `view-${entry.key}`,
+          label: `切换到 ${entry.label}`,
+          run: () => { setView(entry.key); setSelected(null); setPaletteOpen(false); }
+        }));
+        for (const row of rows.slice(0, 30)) {
+          commands.push({
+            key: `row-${row.id}`,
+            label: String(row.title ?? row.id ?? ""),
+            run: () => { selectRow(row); setPaletteOpen(false); }
+          });
+        }
+        var visible = commands
+          .filter((command) => !query || command.label.toLowerCase().includes(query))
+          .slice(0, 12);
+        paletteNode = h("div", { className: "dsh-retro-palette", role: "dialog", "aria-modal": "true", "aria-label": "复盘命令面板" },
+          h("input", {
+            className: "dsh-retro-input",
+            placeholder: "搜索或跳转…（Esc 关闭）",
+            value: paletteQuery,
+            onChange: (event) => setPaletteQuery(event.target.value)
+          }),
+          h("div", { className: "dsh-retro-palette-list" }, visible.map((command) => h("div", {
+            key: command.key,
+            className: "dsh-retro-row",
+            role: "button",
+            onClick: command.run
+          }, command.label)))
+        );
+      }
+
       return h("div", { className: "dsh-retro-main" },
-        h("section", { className: "dsh-retro-list" }, toolbar, listBody),
-        detailPanel
+        h("section", { className: "dsh-retro-list" }, toolbar, insightsStrip, listBody),
+        detailPanel,
+        paletteNode
       );
     }
 

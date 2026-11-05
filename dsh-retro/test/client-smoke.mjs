@@ -24,9 +24,18 @@ function makeElement(tag) {
 }
 
 const created = [];
+const documentListeners = new Map();
 globalThis.document = {
   visibilityState: "visible",
   getElementById() { return null; },
+  addEventListener(type, fn) {
+    if (!documentListeners.has(type)) documentListeners.set(type, []);
+    documentListeners.get(type).push(fn);
+  },
+  removeEventListener(type, fn) {
+    const list = documentListeners.get(type) ?? [];
+    documentListeners.set(type, list.filter((item) => item !== fn));
+  },
   createElement(tag) {
     const el = makeElement(tag);
     created.push(el);
@@ -88,6 +97,11 @@ globalThis.fetch = async (url, options) => {
       generatedAt: new Date().toISOString(),
       rev: 7,
       writeApiEnabled,
+      insights: {
+        funnel: { captured: 3, cards: 2, reviewed: 1, approved: 1, adoptionRate: 1 },
+        trends: [{ period: "2026-W45", cardsCreated: 2, cardsApproved: 1, proposalsAdopted: 0 }],
+        llmUsage: null
+      },
       vaultName: "Obsidian_Stw",
       stats: { cards: 2, draftedCards: 2, approvedCards: 0, proposals: 1, pendingProposals: 1, entries: 0, draftedEntries: 0, publish: 0, publishedPosts: 0, materials: 0, weeklyCount: 0 },
       queue: {
@@ -209,6 +223,18 @@ assert.equal(clientExports.inject.length, 0, "客户端不应声明强制注入"
 
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+/** 执行所有组件 effect 的清理函数（模拟 React 卸载）。 */
+function disposeAllEffects() {
+  for (const slot of hookStore.values()) {
+    for (const effect of slot.effects) {
+      if (effect && typeof effect.cleanup === "function") {
+        try { effect.cleanup(); } catch { /* 已释放 */ }
+        effect.cleanup = undefined;
+      }
+    }
+  }
+}
+
 function makeCtx({ slots, layout } = {}) {
   return {
     get(name) {
@@ -216,7 +242,13 @@ function makeCtx({ slots, layout } = {}) {
       if (name === "layout") return layout;
       return undefined;
     },
-    effect(cb) { this._dispose = cb(); }
+    effect(cb) {
+      const disposer = cb();
+      this._dispose = () => {
+        disposer?.();
+        disposeAllEffects();
+      };
+    }
   };
 }
 
@@ -228,6 +260,10 @@ after(() => {
   }
 });
 function startClient(t, options) {
+  // 每个用例独立 Hook 状态：组件函数在同一模块内复用，effect 只跑一次。
+  disposeAllEffects();
+  hookStore.clear();
+  activeSlot = null;
   const ctx = makeCtx(options);
   clientExports.apply(ctx);
   mounted.push(ctx);
@@ -334,6 +370,39 @@ test("卸载时清理样式、按钮与数据通道", async (t) => {
   ctx._dispose();
   assert.ok(style.removed, "卸载时必须移除样式");
   assert.ok(created.filter((el) => el.className === "dsh-retro-toast").every((el) => el.removed));
+});
+
+test("洞察条展示采纳率，Ctrl+K 打开命令面板并可切换视图", async (t) => {
+  created.length = 0;
+  writeApiEnabled = false;
+  const registered = [];
+  const slots = {
+    inject(key, cb) { cb(); },
+    register(spec, component) { registered.push({ spec, component }); return () => {}; }
+  };
+  const ctx = startClient(t, { slots });
+  await wait(10);
+  const main = registered.find((row) => row.spec.name === "main");
+
+  let tree = expand({ type: main.component, props: {}, children: [] });
+  assert.ok(textOf(tree).includes("采纳率 100%"), "洞察条应展示采纳率");
+
+  // 触发 Ctrl+K：面板出现，包含视图命令
+  const keyHandlers = documentListeners.get("keydown") ?? [];
+  assert.ok(keyHandlers.length > 0, "应注册全局快捷键监听");
+  keyHandlers[0]({ key: "k", ctrlKey: true, preventDefault() {} });
+  tree = expand({ type: main.component, props: {}, children: [] });
+  const palette = findByClass(tree, "dsh-retro-palette");
+  assert.equal(palette.length, 1, "Ctrl+K 应打开命令面板");
+  assert.ok(textOf(palette[0]).includes("切换到 博客"), "命令面板应包含视图切换命令");
+
+  // Esc 关闭
+  keyHandlers[0]({ key: "Escape" });
+  tree = expand({ type: main.component, props: {}, children: [] });
+  assert.equal(findByClass(tree, "dsh-retro-palette").length, 0, "Esc 应关闭命令面板");
+
+  ctx._dispose();
+  assert.equal((documentListeners.get("keydown") ?? []).length, 0, "卸载时必须移除快捷键监听");
 });
 
 test("提案视图展示追加 Diff，并可批量采纳", async (t) => {

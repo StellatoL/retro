@@ -85,6 +85,58 @@ function cardSearchText(card) {
   return `${card.title ?? ""}\n${fields}`.toLowerCase();
 }
 
+/** 计算 ISO 周标识（YYYY-Www），用于趋势聚合；无效日期返回 null。 */
+function weekKeyOf(iso) {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return null;
+  const tmp = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+  const day = tmp.getUTCDay() || 7;
+  tmp.setUTCDate(tmp.getUTCDate() + 4 - day);
+  const yearStart = new Date(Date.UTC(tmp.getUTCFullYear(), 0, 1));
+  const week = Math.ceil(((tmp.getTime() - yearStart.getTime()) / 86400000 + 1) / 7);
+  return `${tmp.getUTCFullYear()}-W${String(week).padStart(2, "0")}`;
+}
+
+/**
+ * 汇总洞察：状态漏斗、按周趋势与元数据里的 LLM 用量。
+ * 放在独立的 insights 键下，保证 stats 与 0.5.0 完全一致。
+ */
+function buildInsights(store) {
+  const cards = store.listCards();
+  const materials = store.listMaterials({ limit: 100000 });
+  const proposals = store.listProposals("adopted");
+  const approved = cards.filter((card) => card.status === "approved").length;
+  const discarded = cards.filter((card) => card.status === "discarded").length;
+  const reviewed = approved + discarded;
+
+  const buckets = new Map();
+  const bump = (iso, field) => {
+    const key = weekKeyOf(iso);
+    if (!key) return;
+    if (!buckets.has(key)) buckets.set(key, { period: key, cardsCreated: 0, cardsApproved: 0, proposalsAdopted: 0 });
+    const bucket = buckets.get(key);
+    bucket[field] += 1;
+  };
+  for (const card of cards) bump(card.createdAt, "cardsCreated");
+  for (const card of cards.filter((item) => item.status === "approved")) bump(card.updatedAt ?? card.createdAt, "cardsApproved");
+  for (const proposal of proposals) bump(proposal.updatedAt ?? proposal.createdAt, "proposalsAdopted");
+  const trends = [...buckets.values()]
+    .sort((a, b) => (a.period < b.period ? 1 : -1))
+    .slice(0, 8);
+
+  return {
+    funnel: {
+      captured: materials.length,
+      cards: cards.length,
+      reviewed,
+      approved,
+      adoptionRate: reviewed === 0 ? 0 : Number((approved / reviewed).toFixed(3))
+    },
+    trends,
+    llmUsage: store.getMeta().llmUsage ?? null
+  };
+}
+
 /** 读取博客文章列表，统一把"未配置/目录缺失"转成带错误码的异常。 */
 function loadBlogPosts(cfg) {
   try {
@@ -213,7 +265,8 @@ export function createQueryService({ store, cfg }) {
       const snapshot = {
         ...renderPanelApi(store, cfg),
         rev,
-        writeApiEnabled: cfg.security?.enableWriteApi === true
+        writeApiEnabled: cfg.security?.enableWriteApi === true,
+        insights: buildInsights(store)
       };
       const wantsPage = ["resource", "status", "q", "limit", "cursor", "sort"].some((key) => params[key] !== undefined);
       if (wantsPage) {

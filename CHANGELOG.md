@@ -2,6 +2,8 @@
 
 ## 未发布（0.7.0 开发中）
 
+- P3 洞察与导航：快照新增 `insights`（状态漏斗、按周趋势、LLM 用量），`stats` 保持 0.5.0 形态不变；客户端新增洞察条、`Ctrl/Cmd+K` 命令面板（切换视图/跳转条目）、列表键盘导航与 ARIA 标注。
+- 架构文档记录有意延后项：多工作区切换、界面多语言、列表虚拟滚动（单页 50 条无需虚拟化）。
 - P2 资源视图：快照支持 `resource=materials|weekly|blog|entries` 列表（素材可按 `kind`/`session` 过滤），新增 `GET /retro/detail?type=blog` 返回 frontmatter、正文与发布前预检（draft 标记、缺失本地图片）。
 - 客户端新增素材 / 周报 / 博客 / 经验库四个视图；博客详情展示预检结果并可复制发布命令。
 - 博客未配置时统一返回 `RETRO_BLOG_UNAVAILABLE`，而不是抛出未分类异常。
