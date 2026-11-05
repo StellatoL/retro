@@ -201,8 +201,8 @@ window.__ModuleLoader__.load({
     // ---------------------------------------------------------------------
     var STYLE_ID = "dsh-retro-styles";
     var PANEL_CSS = [
-      ".dsh-retro-main{position:relative;height:100%;display:flex;gap:0;color:var(--dsw-alias-label-primary,#e6e8ee);font-family:var(--dsw-font-family,system-ui);font-size:13px;line-height:1.5;overflow:hidden}",
-      ".dsh-retro-list{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;overflow:hidden}",
+      ".dsh-retro-main{position:relative;display:flex;gap:0;min-height:260px;height:100%;max-height:100%;box-sizing:border-box;color:var(--dsw-alias-label-primary,#e6e8ee);font-family:var(--dsw-font-family,system-ui);font-size:13px;line-height:1.5;overflow:hidden}",
+      ".dsh-retro-list{flex:1 1 auto;min-width:0;min-height:0;display:flex;flex-direction:column;overflow:hidden}",
       ".dsh-retro-toolbar{display:flex;flex-wrap:wrap;gap:6px;padding:12px 16px;border-bottom:1px solid var(--dsw-alias-border-l1,#ffffff22);align-items:center}",
       ".dsh-retro-input,.dsh-retro-select{background:var(--dsw-alias-bg-soft,#1a1f29);color:inherit;border:1px solid var(--dsw-alias-border-l1,#ffffff22);border-radius:6px;padding:4px 8px;font:inherit;min-width:0}",
       ".dsh-retro-input{flex:1 1 160px}",
@@ -487,12 +487,16 @@ window.__ModuleLoader__.load({
           var res = await fetch(`/retro/api${query ? `?${query}` : ""}`, { headers: { accept: "application/json" } });
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
           var data = await res.json();
-          if (disposed) return;
-          if (data.unchanged) return;
+          if (disposed) return null;
+          if (data.unchanged) return null;
           patch({ snapshot: data, rev: data.rev ?? state.rev, error: null, loading: false });
+          // 返回载荷，供组件自行持有状态：即使宿主侧订阅机制有差异，
+          // 首个挂载也能拿到数据并渲染（不依赖外部重渲染）。
+          return data;
         } catch (error) {
-          if (disposed) return;
+          if (disposed) return null;
           patch({ error: String(error?.message ?? error), loading: false });
+          return null;
         }
       }
 
@@ -581,6 +585,10 @@ window.__ModuleLoader__.load({
 
     /** 侧边栏角标的模块级缓存：由数据层刷新时更新，供无 hooks 的图标组件读取。 */
     var badgeStats = { drafted: 0, proposals: 0 };
+    /** 面板首帧诊断只上报一次，避免刷屏。 */
+    var panelRenderReported = false;
+    /** 上一次 apply 返回的清理器：宿主重复应用插件时先释放旧实例，避免重复注册撞 id。 */
+    var activeInstanceDisposer = null;
 
     /** 订阅数据仓的 Hook。 */
     function useData(store) {
@@ -642,7 +650,18 @@ window.__ModuleLoader__.load({
       var edits = editState[0];
       var setEdits = editState[1];
 
-      var snapshot = state.snapshot;
+      var localState = React.useState(null);
+      var localSnapshot = localState[0];
+      var setLocalSnapshot = localState[1];
+
+      // 组件自持一份快照：首个挂载即渲染数据，不依赖宿主侧订阅触发重渲染。
+      function refresh(params) {
+        store.loadSnapshot(params).then(function (payload) {
+          if (payload) setLocalSnapshot(payload);
+        });
+      }
+
+      var snapshot = localSnapshot || state.snapshot;
       var writeApiEnabled = snapshot?.writeApiEnabled === true;
 
       // 命令面板（Ctrl/Cmd+K）：切换视图或跳转条目
@@ -675,7 +694,7 @@ window.__ModuleLoader__.load({
         } else if (view !== "proposals") {
           query.resource = view;
         }
-        store.loadSnapshot(query);
+        refresh(query);
       }, [store, view, filter.status, filter.q]);
 
       function selectRow(row) {
@@ -711,7 +730,7 @@ window.__ModuleLoader__.load({
             toast.show(t("toast.failed", { message: body?.error?.message ?? `HTTP ${res.status}` }));
             return null;
           }
-          store.loadSnapshot({});
+          refresh({});
           return body;
         } catch (error) {
           toast.show(t("toast.failed", { message: String(error?.message ?? error) }));
@@ -751,7 +770,7 @@ window.__ModuleLoader__.load({
         setSelected(null);
         setChosen([]);
         toast.show(t("workspace.switched", { id }));
-        await store.loadSnapshot({});
+        refresh({});
       }
 
       /** 把内联编辑写回暂存区（只写暂存，不落库）。 */
@@ -823,6 +842,14 @@ window.__ModuleLoader__.load({
       }
       var rows = rowsFor(view);
 
+      // 首次渲染上报一次：用于确认面板是否带着数据挂载（不影响渲染流程）。
+      if (!panelRenderReported) {
+        panelRenderReported = true;
+        try {
+          reportClientError("panel-render", `rows=${rows.length} snapshot=${snapshot ? 1 : 0} view=${view}`);
+        } catch { /* 诊断失败忽略 */ }
+      }
+
       var toolbar = h("div", { className: "dsh-retro-toolbar" },
         h("div", { className: "dsh-retro-tabs", role: "tablist" }, VIEWS.map((entry) => h("button", {
           key: entry.key,
@@ -886,7 +913,7 @@ window.__ModuleLoader__.load({
         listBody = h("div", { className: "dsh-retro-empty" }, t("state.loading"));
       } else if (state.error) {
         listBody = h("div", { className: "dsh-retro-empty" }, t("state.unavailable", { message: state.error }),
-          h("button", { className: "dsh-retro-btn", onClick: () => store.loadSnapshot({}) }, t("state.retry")));
+          h("button", { className: "dsh-retro-btn", onClick: () => refresh({}) }, t("state.retry")));
       } else if (rows.length === 0) {
         listBody = h("div", { className: "dsh-retro-empty" },
           view === "cards" ? t("state.emptyCards") : t("state.emptyProposals"));
@@ -1120,6 +1147,12 @@ window.__ModuleLoader__.load({
     // ---------------------------------------------------------------------
     function apply(ctx) {
       if (typeof document === "undefined") return;
+      // 宿主可能对同一插件多次 apply（热重载/图变化）：先释放上一个实例的注册与资源，
+      // 否则第二次注册同一 slot id 会抛错，表现为"入口时有时无"。
+      if (typeof activeInstanceDisposer === "function") {
+        try { activeInstanceDisposer(); } catch { /* 旧实例已释放 */ }
+        activeInstanceDisposer = null;
+      }
       var style = ensureStyle();
       var toast = createToast();
       var store = createDataStore();
@@ -1143,6 +1176,8 @@ window.__ModuleLoader__.load({
       var iconRegistered = false;
       var fab = null;
       var fabTimer = null;
+      // 自己记录槽位 disposer：即使宿主不回调 inject 的返回值，也能在卸载/重新应用时释放。
+      var registrationDisposers = [];
 
       function entryReady() { return panelRegistered && iconRegistered; }
       function mountFab() {
@@ -1170,6 +1205,7 @@ window.__ModuleLoader__.load({
           slots.inject("main", function () {
             try {
               var disposePanel = slots.register({ name: "main", key: PANEL_ID }, PanelBody);
+              if (typeof disposePanel === "function") registrationDisposers.push(disposePanel);
               panelRegistered = true;
               maybeUnmountFab();
               return disposePanel;
@@ -1188,6 +1224,7 @@ window.__ModuleLoader__.load({
                 order: 5,
                 label: function () { return t("kind.retro"); }
               }, SidebarIcon);
+              if (typeof disposeIcon === "function") registrationDisposers.push(disposeIcon);
               iconRegistered = true;
               maybeUnmountFab();
               return disposeIcon;
@@ -1215,15 +1252,34 @@ window.__ModuleLoader__.load({
       }
 
       // 卸载清理：数据仓（SSE/轮询）、浮动按钮、提示、样式。
-      ctx.effect(function () {
+      var disposeInstance = ctx.effect(function () {
         return function () {
           disposed = true;
           unmountFab();
           store.stop();
+          // 释放槽位注册：宿主重复应用时不会撞 id，卸载后也不留悬挂条目。
+          for (var disposer of registrationDisposers.splice(0)) {
+            try { disposer(); } catch { /* 已释放 */ }
+          }
           toast.remove();
           if (style) style.remove();
         };
       }, "dsh-retro: client");
+      // 记录清理器（effect 在部分宿主返回 undefined 时退化为可调用的空函数）。
+      activeInstanceDisposer = typeof disposeInstance === "function"
+        ? disposeInstance
+        : function () {
+          try {
+            disposed = true;
+            unmountFab();
+            store.stop();
+            for (var disposer of registrationDisposers.splice(0)) {
+              try { disposer(); } catch { /* 已释放 */ }
+            }
+            toast.remove();
+            if (style) style.remove();
+          } catch { /* 清理失败忽略 */ }
+        };
     }
 
     /** 上报浏览器端异常到宿主诊断日志（失败也忽略，绝不影响主流程）。 */

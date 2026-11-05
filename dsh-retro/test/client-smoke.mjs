@@ -472,6 +472,29 @@ test("多工作区时显示选择器并调用切换动作", async (t) => {
   ctx._dispose();
 });
 
+test("重复 apply 会先释放旧实例，不产生重复注册", async (t) => {
+  created.length = 0;
+  const live = new Map();
+  const slots = {
+    inject(key, cb) { cb(); },
+    register(spec) {
+      const slotKey = `${spec.name}:${spec.key ?? spec.id ?? ""}`;
+      if (live.has(slotKey)) throw new Error(`duplicate ${slotKey}`);
+      live.set(slotKey, true);
+      return () => { live.delete(slotKey); };
+    }
+  };
+  const ctx = makeCtx({ slots });
+  clientExports.apply(ctx);
+  assert.deepEqual([...live.keys()].sort(), ["main:dsh-retro", "sidebar.panellist:dsh-retro"]);
+
+  // 宿主重复应用（热重载）：必须先释放旧注册，否则第二次会撞 id
+  clientExports.apply(ctx);
+  assert.deepEqual([...live.keys()].sort(), ["main:dsh-retro", "sidebar.panellist:dsh-retro"]);
+  assert.ok(!created.some((el) => el.className === "dsh-retro-fab"), "重复应用不应退化成浮动入口");
+  ctx._dispose();
+});
+
 test("提案视图展示追加 Diff，并可批量采纳", async (t) => {
   created.length = 0;
   fetched = [];
