@@ -1,6 +1,6 @@
 {
   "name": "dsh-retro",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "DeepSeek Harness 经验复盘插件：采集、提炼、人工审阅、经验沉淀与博客联动。",
   "type": "module",
   "main": "./dsh-retro/lib/index.js",
